@@ -153,6 +153,29 @@ class FinancialTests(unittest.TestCase):
         with self.assertRaises(Problem):
             self.store.authenticate("test-password")
 
+    def test_20_supplier_expense_and_migration(self):
+        self.store.db.execute("INSERT INTO suppliers(name,service) VALUES ('Cleaner','ניקיון')")
+        supplier = self.store.rows("SELECT id FROM suppliers WHERE name='Cleaner'")[0]["id"]
+        entry = self.ledger.post("expense",2500,"2025-01-15",METHODS[0],"supplier-payment",
+                                 category=self.expense,party="Cleaner",description="Cleaning",supplier=supplier)
+        self.assertEqual(self.store.rows("SELECT supplier FROM entries WHERE id=?",entry)[0]["supplier"],supplier)
+        self.assertEqual(self.ledger.cash()[0],497500)
+        self.store.db.close()
+        self.store.db = Store(self.store.path).db
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0],2)
+        self.assertEqual(self.ledger.cash()[0],497500)
+
+    def test_21_recurring_never_posts_cash_until_confirmed(self):
+        self.store.db.execute("INSERT INTO recurring_expenses(category,usual_amount,frequency_months,due_day,starts) VALUES (?,?,?,?,?)",
+                              (self.expense,2500,1,15,"2025-01-01"))
+        due = self.ledger.recurring_due("2025-02-28")
+        self.assertEqual([period for _,period,_ in due],["2025-01","2025-02"])
+        self.assertEqual(self.ledger.cash()[0],500000)
+        entry = self.spend(2500,"2025-01-15","regular")
+        self.ledger.match_recurring(due[0][0]["id"],"2025-01",entry)
+        self.assertEqual([period for _,period,_ in self.ledger.recurring_due("2025-02-28")],["2025-02"])
+        self.assertEqual(self.ledger.cash()[0],497500)
+
 
 if __name__ == "__main__":
     unittest.main()
