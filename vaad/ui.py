@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from .store import Store, Problem, money, valid_day
 from .ledger import Ledger, LABELS, METHODS
+from .theme import COLORS, FONT, ROW_HEIGHT
 
 
 def today():
@@ -101,7 +102,7 @@ class Dialog(tk.Toplevel):
 
 
 class App(tk.Tk):
-    PAGES = ("לוח בקרה","דיירים ודירות","גבייה ותשלומים","תנועות כספיות","דוחות","הגדרות")
+    PAGES = ("לוח בקרה","דיירים ודירות","גבייה ותשלומים","תנועות כספיות","ספקים","דוחות וניתוחים","הגדרות")
 
     def __init__(self, store):
         super().__init__()
@@ -110,18 +111,18 @@ class App(tk.Tk):
         self.title("ועד הבית  |  שחריי 14 · 16 · 18")
         self.geometry("1210x760")
         self.minsize(880,620)
-        self.configure(bg="#edf1f5")
-        self.option_add("*font", ("Segoe UI",10))
+        self.configure(bg=COLORS["background"])
+        self.option_add("*font", (FONT,10))
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("TFrame",background="#edf1f5")
-        style.configure("TLabel",background="#edf1f5",foreground="#243650",padding=2)
-        style.configure("TButton",padding=(12,7),background="#ffffff",foreground="#243650")
-        style.configure("Primary.TButton",background="#203b59",foreground="#ffffff")
-        style.map("Primary.TButton",background=[("active","#325676")])
-        style.configure("Treeview",rowheight=31,background="#ffffff",fieldbackground="#ffffff",foreground="#243650",borderwidth=0)
-        style.configure("Treeview.Heading",background="#e1e8f0",foreground="#243650",padding=(6,8),font=("Segoe UI",10,"bold"))
-        style.map("Treeview",background=[("selected","#345b7c")])
+        style.configure("TFrame",background=COLORS["background"])
+        style.configure("TLabel",background=COLORS["background"],foreground=COLORS["text"],padding=2)
+        style.configure("TButton",padding=(11,6),background=COLORS["surface"],foreground=COLORS["text"],bordercolor=COLORS["border"])
+        style.configure("Primary.TButton",background=COLORS["action"],foreground=COLORS["surface"])
+        style.map("Primary.TButton",background=[("active","#1D4ED8")])
+        style.configure("Treeview",rowheight=ROW_HEIGHT,background=COLORS["surface"],fieldbackground=COLORS["surface"],foreground=COLORS["text"],borderwidth=0)
+        style.configure("Treeview.Heading",background="#EDF2F7",foreground=COLORS["nav_active"],padding=(6,8),font=(FONT,10,"bold"))
+        style.map("Treeview",background=[("selected",COLORS["nav_active"])])
         self.status = tk.StringVar()
         self.period = today()[:7]
         self.logged = False
@@ -194,19 +195,22 @@ class App(tk.Tk):
         self.ledger.generate()
         self.logged = True
         self.reset()
-        sidebar = tk.Frame(self,bg="#18314c",width=196)
+        sidebar = tk.Frame(self,bg=COLORS["nav"],width=196)
         sidebar.pack(side="right",fill="y")
         sidebar.pack_propagate(False)
-        tk.Label(sidebar,text="ועד הבית",bg="#18314c",fg="white",font=("Segoe UI",22,"bold"),anchor="e").pack(fill="x",padx=18,pady=(26,3))
-        tk.Label(sidebar,text=self.store.get("complex"),bg="#18314c",fg="#bdcddd",anchor="e",wraplength=165,justify="right").pack(fill="x",padx=18,pady=(0,24))
+        tk.Label(sidebar,text="ועד הבית",bg=COLORS["nav"],fg="white",font=(FONT,20,"bold"),anchor="e").pack(fill="x",padx=18,pady=(24,3))
+        tk.Label(sidebar,text=self.store.get("complex"),bg=COLORS["nav"],fg="#CBD5E1",anchor="e",wraplength=165,justify="right").pack(fill="x",padx=18,pady=(0,20))
+        self.sidebar = sidebar
+        self.compact = False
+        tk.Button(sidebar,text="צמצום תפריט",anchor="e",relief="flat",bg=COLORS["nav"],fg="#CBD5E1",command=self.toggle_sidebar).pack(side="bottom",fill="x",pady=4)
         self.nav = []
         for i,name in enumerate(self.PAGES):
             button = tk.Button(sidebar,text=name,anchor="e",padx=15,pady=9,relief="flat",borderwidth=0,
-                               bg="#18314c",fg="white",activebackground="#345674",activeforeground="white",
+                               bg=COLORS["nav"],fg="white",activebackground=COLORS["nav_active"],activeforeground="white",
                                command=lambda idx=i: self.show(idx))
             button.pack(fill="x",padx=9,pady=2)
             self.nav.append(button)
-        tk.Button(sidebar,text="נעילת המערכת",relief="flat",bg="#18314c",fg="#d4dfed",command=self.lock).pack(side="bottom",fill="x",pady=16)
+        tk.Button(sidebar,text="נעילת המערכת",relief="flat",bg=COLORS["nav"],fg="#CBD5E1",command=self.lock).pack(side="bottom",fill="x",pady=10)
         self.main = ttk.Frame(self,padding=(20,14))
         self.main.pack(side="right",fill="both",expand=True)
         self.show(0)
@@ -214,12 +218,18 @@ class App(tk.Tk):
     def show(self,index, mode=None):
         self.page,self.mode = index,mode
         for i,button in enumerate(self.nav):
-            button.configure(bg="#345674" if i==index else "#18314c")
+            button.configure(bg=COLORS["nav_active"] if i==index else COLORS["nav"])
         for child in self.main.winfo_children():
             child.destroy()
-        ttk.Label(self.main,text=self.PAGES[index],font=("Segoe UI",24,"bold"),anchor="e").pack(fill="x",pady=(0,11))
+        ttk.Label(self.main,text=self.PAGES[index],font=(FONT,21,"bold"),anchor="e").pack(fill="x",pady=(0,10))
         ttk.Label(self.main,textvariable=self.status,anchor="e",foreground="#27634d").pack(side="bottom",fill="x")
-        (self.dashboard,self.units,self.collection,self.movements,self.reports,self.settings)[index]()
+        (self.dashboard,self.units,self.collection,self.movements,self.suppliers,self.reports,self.settings)[index]()
+
+    def toggle_sidebar(self):
+        self.compact = not self.compact
+        self.sidebar.configure(width=110 if self.compact else 196)
+        for button,name in zip(self.nav,self.PAGES):
+            button.configure(text=name.split(" ")[0] if self.compact else name)
 
     def refresh(self, message="הפעולה נשמרה"):
         self.status.set(message)
@@ -256,10 +266,25 @@ class App(tk.Tk):
         tree.pack(side="right",fill="both",expand=True)
         tree.tag_configure("alternate",background="#f5f8fb")
         for index,label in enumerate(reversed(headers)):
-            tree.heading(index,text=label,anchor="e")
+            tree.heading(index,text=label,anchor="e",command=lambda column=index: self.sort_table(tree,column))
             tree.column(index,width=max(90,len(label)*9+16),minwidth=65,anchor="e")
         self.fill(tree,rows)
         return tree
+
+    def sort_table(self,tree,column):
+        reverse = getattr(tree,"sort_state",None) == (column,False)
+        rows = list(tree.get_children())
+        if rows == ["empty"]:
+            return
+        def key(item):
+            value = tree.set(item,column).replace("₪", "").replace(",", "").strip()
+            try:
+                return (0,float(value))
+            except ValueError:
+                return (1,value.casefold())
+        for index,item in enumerate(sorted(rows,key=key,reverse=reverse)):
+            tree.move(item,"",index)
+        tree.sort_state = (column,reverse)
 
     def fill(self,tree,rows):
         tree.delete(*tree.get_children())
@@ -317,13 +342,17 @@ class App(tk.Tk):
             self.refresh(f'תשלום {entry} · {v["unit"]} · {v["day"]} · {amount(money(v["amount"]))} · יתרה {amount(self.ledger.account(unit)["balance"])}')
         Dialog(self,"רישום תשלום",fields,post,footer)
 
-    def movement_form(self,kind):
+    def movement_form(self,kind,prefill=None):
+        prefill = prefill or {}
         label = LABELS[kind]
         categories = {r["name"]:r["id"] for r in self.store.rows("SELECT * FROM categories WHERE kind=? AND active=1 ORDER BY name",kind)}
-        fields = [("day","תאריך",date_text(today()),None),("amount","סכום בשקלים","",None),
-                  ("party","ספק או מקור","",None),("category","קטגוריה",next(iter(categories),""),list(categories)),
-                  ("description","תיאור","",None),("method","אמצעי תשלום",METHODS[0],METHODS),
+        suppliers = {r["name"]:r["id"] for r in self.store.rows("SELECT id,name FROM suppliers WHERE active=1 ORDER BY name")} if kind=="expense" else {}
+        fields = [("day","תאריך",prefill.get("day",date_text(today())),None),("amount","סכום בשקלים",prefill.get("amount",""),None),
+                  ("party","ספק או מקור",prefill.get("party",""),None),("category","קטגוריה",prefill.get("category",next(iter(categories),"")),list(categories)),
+                  ("description","תיאור",prefill.get("description",""),None),("method","אמצעי תשלום",METHODS[0],METHODS),
                   ("reference","מספר חשבונית או אסמכתא","",None),("notes","הערות","",None)]
+        if suppliers:
+            fields.insert(3,("supplier","כרטיס ספק",prefill.get("supplier","ללא שיוך"),("ללא שיוך",*suppliers)))
         token = uuid4().hex
         def save(v):
             value = money(v["amount"])
@@ -332,7 +361,10 @@ class App(tk.Tk):
             ):
                 return False
             entry = self.ledger.post(kind,value,iso(v["day"]),v["method"],token,category=categories.get(v["category"]),
+                                     supplier=suppliers.get(v.get("supplier")),
                                      **{k:v[k] for k in ("party","description","reference","notes")})
+            if prefill.get("recurring"):
+                self.ledger.match_recurring(prefill["recurring"],prefill["period"],entry)
             self.refresh(f"הפעולה נשמרה · {entry}")
         Dialog(self,label,fields,save)
 
@@ -351,17 +383,19 @@ class App(tk.Tk):
         expected = sum(c["due"] for _,c,*_ in details)
         received = sum(c["paid"] for _,c,*_ in details)
         debtors = self.debt_rows()
+        credits = sum(max(0,-self.ledger.account(u["id"])["balance"]) for u in self.ledger.units())
         metrics = [
             ("יתרת הקופה",self.ledger.cash()[0],lambda: self.show(3)),
             ("הכנסות החודש",report["payment"]+report["income"],lambda: self.show(3,"income")),
             ("הוצאות החודש",-report["expense"],lambda: self.show(3,"expense")),
             ("סך החובות",sum(a["balance"] for _,a in debtors),lambda: self.show(2,"debt")),
+            ("יתרות זכות",credits,lambda: self.show(1)),
             ("גבייה צפויה",expected,lambda: self.show(2,"current")),
             ("גבייה בפועל",received,lambda: self.show(2,"current")),
         ]
         grid = self.bar()
         for index,(label,value,command) in enumerate(metrics):
-            column = 2-index%3
+            column = 3-index%4
             grid.columnconfigure(column,weight=1,uniform="metrics")
             ttk.Button(grid,text=f"{label}\n{amount(value)}",command=command).grid(row=index//3,column=column,sticky="ew",padx=4,pady=4)
         counts = [f'{state} {sum(item[4]==state for item in details)}' for state in ("שולם","שולם חלקית","לא שולם","פטור")]
@@ -380,6 +414,11 @@ class App(tk.Tk):
         ttk.Label(self.main,text="חובות עיקריים",anchor="e",font=("Segoe UI",12,"bold")).pack(fill="x")
         self.table(("יחידה","דייר","חוב"),[(u["id"],(unit_name(u),u["tenant"] or u["owner"],amount(a["balance"])))
                   for u,a in debtors[:5]],height=4)
+        due = self.ledger.recurring_due(today())
+        if due:
+            bar = self.bar()
+            ttk.Label(bar,text=f"{len(due)} הוצאות קבועות ממתינות",anchor="e",foreground=COLORS["warning"]).pack(side="right")
+            self.button(bar,"פתיחת מועדים",lambda:self.show(3,"recurring"))
 
     def units(self):
         if isinstance(self.mode,tuple) and self.mode[0]=="unit":
@@ -427,6 +466,7 @@ class App(tk.Tk):
         bar = self.bar()
         self.button(bar,"רישום תשלום",lambda: self.payment(unit),True)
         self.button(bar,"פרטי היחידה",lambda: self.edit_unit(row))
+        self.button(bar,"החלפת דייר",lambda: self.replace_resident(row))
         self.button(bar,"שינוי תעריף",lambda: self.change_rate(unit,row["rate"] or 0))
         self.button(bar,"חזרה לרשימה",lambda: self.show(1))
         if not any(entry["kind"]=="opening" for entry in self.ledger.history(unit)):
@@ -465,6 +505,30 @@ class App(tk.Tk):
                 data.append((0,("", "יתרה קודמת","","",amount(running),"")))
             self.fill(tree,data)
         load()
+
+    def replace_resident(self,row):
+        balance = self.ledger.account(row["id"])["balance"]
+        fields = [("role","תפקיד","שוכר",("שוכר","בעלים")),
+                  ("name","שם חדש","",None),("phone","טלפון חדש","",None),
+                  ("email","דואר אלקטרוני חדש","",None),
+                  ("day","תאריך שינוי",date_text(today()),None),
+                  ("notes","אחריות וחובות קודמים","",None)]
+        def save(values):
+            day = valid_day(iso(values["day"]))
+            if day > today() or not values["name"].strip():
+                raise Problem("יש להזין שם ותאריך שאינו עתידי")
+            role = "tenant" if values["role"]=="שוכר" else "owner"
+            previous = row[role]
+            if not messagebox.askyesno("החלפת דייר",f"יתרת היחידה {amount(balance)}. הרישום הכספי יישאר בכרטיס היחידה. להמשיך?",parent=self):
+                return False
+            with self.store.write():
+                if previous:
+                    self.store.db.execute("INSERT INTO occupants(unit,role,name,phone,email,arrived,departed,notes) VALUES (?,?,?,?,?,?,?,?)",
+                                          (row["id"],role,previous,row["phone"],row["email"],self.store.get("start"),day,values["notes"].strip()))
+                self.store.db.execute(f"UPDATE units SET {role}=?,phone=?,email=? WHERE id=?",
+                                      (values["name"].strip(),values["phone"].strip(),values["email"].strip(),row["id"]))
+            self.refresh()
+        Dialog(self,"החלפת דייר",fields,save)
 
     def edit_unit(self,row):
         keys = ("apartment","owner","tenant","phone","email","notes")
@@ -553,8 +617,12 @@ class App(tk.Tk):
         return lo,hi
 
     def movements(self):
+        if self.mode=="recurring":
+            self.recurring_page()
+            return
         bar = self.bar()
         self.button(bar,"רישום הוצאה",lambda:self.movement_form("expense"),True)
+        self.button(bar,"הוצאות קבועות",lambda:self.show(3,"recurring"))
         self.button(bar,"רישום הכנסה",lambda:self.movement_form("income"))
         self.button(bar,"ביטול פעולה",lambda:self.reversal(self.selection(tree)))
         self.button(bar,"פרטי תנועה",lambda:self.movement_info(self.selection(tree)))
@@ -614,6 +682,104 @@ class App(tk.Tk):
             lines.append(f'בוטלה בפעולה {reversed_by[0]["id"]}')
         messagebox.showinfo("פרטי תנועה","\n".join(lines),parent=self)
 
+    def suppliers(self):
+        bar = self.bar()
+        query = self.input(bar,"חיפוש",width=22)
+        self.button(bar,"ספק חדש",lambda: edit(None),True)
+        self.button(bar,"עריכת ספק",lambda: edit(self.selection(tree)))
+        self.button(bar,"רישום הוצאה",lambda: self.movement_form("expense"))
+        suppliers = {r["id"]:r for r in self.store.rows("SELECT * FROM suppliers ORDER BY name")}
+        expenses = self.store.rows("SELECT supplier,day,cash FROM entries WHERE kind='expense' AND supplier IS NOT NULL")
+        tree = self.table(("שם","שירות","טלפון","איש קשר","תשלום החודש","תשלום השנה","הוצאה אחרונה","מצב"))
+        def load(*_):
+            data = []
+            for supplier in suppliers.values():
+                if query.get().casefold() not in " ".join(str(supplier[k]) for k in ("name","service","phone","contact")).casefold():
+                    continue
+                paid = [r for r in expenses if r["supplier"]==supplier["id"]]
+                data.append((supplier["id"],(supplier["name"],supplier["service"],supplier["phone"],supplier["contact"],
+                             amount(-sum(r["cash"] for r in paid if r["day"][:7]==today()[:7])),
+                             amount(-sum(r["cash"] for r in paid if r["day"][:4]==today()[:4])),
+                             date_text(max((r["day"] for r in paid),default="")),"פעיל" if supplier["active"] else "לא פעיל")))
+            self.fill(tree,data)
+        def edit(identifier):
+            row = suppliers.get(identifier)
+            labels = (("name","שם"),("service","סוג שירות"),("phone","טלפון"),("contact","איש קשר"),
+                      ("email","דואר אלקטרוני"),("notes","הערות"))
+            fields = [(key,label,row[key] if row else "",None) for key,label in labels]
+            fields.append(("active","מצב","פעיל" if not row or row["active"] else "לא פעיל",("פעיל","לא פעיל")))
+            def save(values):
+                if not values["name"].strip():
+                    raise Problem("יש להזין שם ספק")
+                data = [values[key].strip() for key,_ in labels] + [int(values["active"]=="פעיל")]
+                with self.store.write():
+                    if identifier:
+                        self.store.db.execute("UPDATE suppliers SET name=?,service=?,phone=?,contact=?,email=?,notes=?,active=? WHERE id=?",(*data,identifier))
+                    else:
+                        self.store.db.execute("INSERT INTO suppliers(name,service,phone,contact,email,notes,active) VALUES (?,?,?,?,?,?,?)",data)
+                self.refresh()
+            Dialog(self,"פרטי ספק",fields,save)
+        query.trace_add("write",load)
+        load()
+
+    def recurring_page(self):
+        bar = self.bar()
+        self.button(bar,"הוצאה קבועה חדשה",lambda: edit(),True)
+        self.button(bar,"רישום הוצאה",lambda: pay())
+        self.button(bar,"שיוך הוצאה קיימת",lambda: link())
+        self.button(bar,"חזרה ליומן",lambda:self.show(3))
+        due = self.ledger.recurring_due(today())
+        tree = self.table(("מועד","ספק","קטגוריה","סכום רגיל","תדירות בחודשים","מצב"),[
+            (f"{r['id']}-{period}",(date_text(day),r["supplier_name"] or "—",r["category_name"],
+                                      amount(r["usual_amount"]),r["frequency_months"],"ממתין לרישום"))
+            for r,period,day in due])
+        def chosen():
+            selected = tree.selection()
+            if not selected or selected[0]=="empty":
+                raise Problem("יש לבחור מועד בטבלה")
+            return next(item for item in due if f"{item[0]['id']}-{item[1]}"==selected[0])
+        def pay():
+            row,period,day = chosen()
+            self.movement_form("expense",dict(day=date_text(day),amount=number(row["usual_amount"]),
+                party=row["supplier_name"] or "",supplier=row["supplier_name"] or "ללא שיוך",
+                category=row["category_name"],description=row["notes"] or row["category_name"],
+                recurring=row["id"],period=period))
+        def link():
+            row,period,_ = chosen()
+            expenses = self.store.rows("SELECT id,day,party,cash FROM entries WHERE kind='expense' "
+                                       "AND id NOT IN (SELECT expense FROM recurring_matches) ORDER BY day DESC,id DESC LIMIT 100")
+            choices = {f"{e['id']} · {date_text(e['day'])} · {e['party']} · {amount(-e['cash'])}":e["id"] for e in expenses}
+            if not choices:
+                raise Problem("אין הוצאה זמינה לשיוך")
+            def save(values):
+                self.ledger.match_recurring(row["id"],period,choices[values["expense"]])
+                self.refresh()
+            Dialog(self,"שיוך הוצאה קיימת",[("expense","הוצאה",next(iter(choices)),tuple(choices))],save)
+        def edit():
+            suppliers = {r["name"]:r["id"] for r in self.store.rows("SELECT id,name FROM suppliers WHERE active=1 ORDER BY name")}
+            categories = {r["name"]:r["id"] for r in self.store.rows("SELECT id,name FROM categories WHERE kind='expense' AND active=1 ORDER BY name")}
+            fields = [("supplier","ספק","ללא שיוך",("ללא שיוך",*suppliers)),
+                      ("category","קטגוריה",next(iter(categories)),tuple(categories)),
+                      ("amount","סכום רגיל בשקלים","",None),
+                      ("variable","סכום","קבוע",("קבוע","משתנה")),
+                      ("frequency","כל כמה חודשים","1",None),
+                      ("due_day","יום בחודש","1",None),
+                      ("starts","תאריך התחלה",date_text(today()),None),
+                      ("ends","תאריך סיום (אופציונלי)","",None),
+                      ("notes","תיאור","",None)]
+            def save(values):
+                frequency,day = int(values["frequency"]),int(values["due_day"])
+                start = valid_day(iso(values["starts"]))
+                end = valid_day(iso(values["ends"])) if values["ends"].strip() else None
+                if frequency<1 or day<1 or day>31 or end and end<start:
+                    raise Problem("תדירות או תאריך אינם תקינים")
+                with self.store.write():
+                    self.store.db.execute("INSERT INTO recurring_expenses(supplier,category,usual_amount,variable,frequency_months,due_day,starts,ends,notes) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (suppliers.get(values["supplier"]),categories[values["category"]],money(values["amount"]),
+                         int(values["variable"]=="משתנה"),frequency,day,start,end,values["notes"].strip()))
+                self.refresh()
+            Dialog(self,"הוצאה קבועה",fields,save)
+
     @staticmethod
     def cash_row(row,units):
         inflow = row["base_kind"]!="expense"
@@ -632,7 +798,7 @@ class App(tk.Tk):
         option = self.input(bar,"דוח",selected,options,20)
         start = self.input(bar,"מתאריך",from_date,width=11)
         end = self.input(bar,"עד תאריך",to_date,width=11)
-        self.button(bar,"הצגה",lambda:self.show(4,(option.get(),start.get(),end.get())),True)
+        self.button(bar,"הצגה",lambda:self.show(5,(option.get(),start.get(),end.get())),True)
         lo,hi = self.bounds(from_date,to_date)
         if selected==options[2]:
             self.debtor_table()
@@ -721,7 +887,7 @@ class App(tk.Tk):
             ("פרטי ועד הבית", [
                 ("עריכת פרטים כלליים",self.general),
                 ("תעריף ברירת מחדל",self.default_rate),
-                ("ניהול קטגוריות",lambda:self.show(5,"categories")),
+                ("ניהול קטגוריות",lambda:self.show(6,"categories")),
             ]),
             ("אבטחה", [("שינוי סיסמה",self.password),("נעילה והתנתקות",self.lock)]),
             ("נתונים וגיבוי", [
@@ -778,7 +944,7 @@ class App(tk.Tk):
         bar = self.bar()
         self.button(bar,"קטגוריה חדשה",lambda: edit(None),True)
         self.button(bar,"עריכת קטגוריה",lambda:edit(self.selection(tree)))
-        self.button(bar,"חזרה",lambda:self.show(5))
+        self.button(bar,"חזרה",lambda:self.show(6))
         items = {r["id"]:r for r in self.store.rows("SELECT * FROM categories ORDER BY kind,name")}
         tree = self.table(("שם","סוג","מצב"),[(r["id"],(r["name"],LABELS[r["kind"]],"פעילה" if r["active"] else "לא פעילה"))
                           for r in items.values()])
