@@ -41,7 +41,7 @@ def password_hash(password, salt):
 
 
 class Store:
-    SCHEMA = 1
+    SCHEMA = 2
     APP_ID = 0x56414144
 
     def __init__(self, path):
@@ -55,6 +55,10 @@ class Store:
                 f"BEGIN IMMEDIATE; {migration} PRAGMA application_id={self.APP_ID}; "
                 f"PRAGMA user_version=1; COMMIT;"
             )
+            version = 1
+        if version == 1:
+            migration = Path(__file__).with_name("002.sql").read_text(encoding="utf-8-sig")
+            self.db.executescript(f"BEGIN IMMEDIATE; {migration} PRAGMA user_version=2; COMMIT;")
         self.verify(self.db)
 
     @staticmethod
@@ -152,7 +156,12 @@ class Store:
 
     def inspect_backup(self, source):
         with closing(self.connect(Path(source), readonly=True)) as candidate:
-            self.verify(candidate)
+            version = candidate.execute("PRAGMA user_version").fetchone()[0]
+            if (candidate.execute("PRAGMA application_id").fetchone()[0] != self.APP_ID
+                or version not in (1, self.SCHEMA)
+                or candidate.execute("PRAGMA integrity_check").fetchone()[0] != "ok"
+                or candidate.execute("PRAGMA foreign_key_check").fetchone()):
+                raise Problem("הגיבוי פגום או אינו תואם לגרסה זו")
             settings = dict(candidate.execute("SELECT key,value FROM settings"))
             if not all(settings.get(key) for key in ("start","password","salt","name","initial")):
                 raise Problem("הגיבוי אינו כולל מערכת מוגדרת")
@@ -163,7 +172,8 @@ class Store:
             staged = Path(directory) / "restore.sqlite3"
             with closing(self.connect(Path(source), readonly=True)) as candidate, closing(self.connect(staged)) as copy:
                 candidate.backup(copy)
-                self.verify(copy)
+            with closing(Store(staged)):
+                pass
             self.inspect_backup(staged)
             if self.get("start"):
                 self.backup(safety_folder)
@@ -172,4 +182,7 @@ class Store:
                 os.replace(staged, self.path)
             finally:
                 self.db = self.connect(self.path)
+
+    def close(self):
+        self.db.close()
 
