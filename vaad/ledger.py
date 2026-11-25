@@ -1,4 +1,5 @@
 from datetime import date
+from calendar import monthrange
 from .store import Problem, valid_day, month_next
 
 METHODS = ("מזומן", "העברה בנקאית", "המחאה", "אחר")
@@ -120,7 +121,7 @@ class Ledger:
                                   (unit,date.today().isoformat(),amount-charge["due"],charge["id"],reason))
 
     def post(self, kind, amount, day, method, token, unit=None, category=None, party="",
-             description="", reference="", notes="", allow_duplicate=False):
+             description="", reference="", notes="", allow_duplicate=False, supplier=None):
         day = self._day(day)
         if kind not in ("payment","expense","income") or not isinstance(amount,int) or amount<=0 or method not in METHODS or not token:
             raise Problem("יש למלא סכום חיובי ואמצעי תשלום")
@@ -142,10 +143,10 @@ class Ledger:
                 )):
                     raise Problem("יש להזין שם, תיאור וקטגוריה פעילה")
             return self.store.db.execute("""
-              INSERT INTO entries(kind,day,unit,debit,cash,category,method,party,description,reference,notes,token)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+              INSERT INTO entries(kind,day,unit,debit,cash,category,method,party,description,reference,notes,token,supplier)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (kind,day,unit,-amount if kind=="payment" else 0,-amount if kind=="expense" else amount,
-                  category,method,party,description,reference,notes,token)).lastrowid
+                  category,method,party,description,reference,notes,token,supplier)).lastrowid
 
     def reverse(self, entry, reason, day=None):
         day = self._day(day or date.today().isoformat())
@@ -207,4 +208,32 @@ class Ledger:
             WHERE c.kind='charge' AND substr(c.period,1,?)=?
         """,len(period),period)[0][0]
         return dict(totals,initial=initial,final=initial+sum(totals.values()),charges=charges)
+
+    def recurring_due(self, through=None):
+        """Return due occurrences without posting cash movements."""
+        through = valid_day(through or date.today().isoformat())
+        result = []
+        for row in self.store.rows("SELECT r.*,s.name supplier_name,c.name category_name FROM recurring_expenses r "
+                                   "LEFT JOIN suppliers s ON s.id=r.supplier "
+                                   "JOIN categories c ON c.id=r.category WHERE r.active=1 ORDER BY r.starts,r.id"):
+            year, month = map(int,row["starts"][:7].split("-"))
+            while f"{year:04d}-{month:02d}-01" <= through:
+                period = f"{year:04d}-{month:02d}"
+                day = f"{period}-{min(row['due_day'],monthrange(year,month)[1]):02d}"
+                if day >= row["starts"] and day <= through and (not row["ends"] or day <= row["ends"]):
+                    match = self.store.rows("SELECT expense FROM recurring_matches WHERE recurring=? AND period=?",row["id"],period)
+                    if not match:
+                        result.append((row,period,day))
+                next_month = month - 1 + row["frequency_months"]
+                year += next_month // 12
+                month = next_month % 12 + 1
+        return result
+
+    def match_recurring(self, recurring, period, expense):
+        with self.store.write():
+            if not self.store.rows("SELECT id FROM recurring_expenses WHERE id=?",recurring):
+                raise Problem("הוצאה קבועה אינה קיימת")
+            if not self.store.rows("SELECT id FROM entries WHERE id=? AND kind='expense'",expense):
+                raise Problem("יש לבחור הוצאה שנרשמה")
+            self.store.db.execute("INSERT INTO recurring_matches VALUES (?,?,?)",(recurring,period,expense))
 
