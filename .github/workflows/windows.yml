@@ -31,4 +31,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release create phase-1 dist/VaadBayt.exe --title "Vaad Bayt phase 1" --notes "Windows desktop application, phase 1." --target "${{ github.sha }}" --latest
+          gh release create phase-2a-preview dist/VaadBayt.exe --title "Vaad Bayt phase 2A preview" --notes "Windows executable with the current phase 2A changes. Design and management work remains in progress." --target "${{ github.sha }}" --latest
