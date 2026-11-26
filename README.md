@@ -1,6 +1,6 @@
-# Vaad Bayt · Version 2.0 (שחריי 14, 16 ו-18)
+# Vaad Bayt · Version 3.0 (שחראי 14, 16 ו-18)
 
-Application desktop Windows **100 % hors ligne (OFFLINE)** en hébreu RTL pour la gestion d’une caisse commune unique regroupant les immeubles **שחריי 14, 16 et 18** (20 appartements physiques / 21 unités de facturation).
+Application desktop Windows **100 % hors ligne (OFFLINE)** en hébreu RTL pour la gestion d’une caisse commune unique regroupant les immeubles **שחראי 14, 16 et 18** (20 appartements physiques / 21 unités de facturation).
 
 ## Lancer, tester et compiler
 

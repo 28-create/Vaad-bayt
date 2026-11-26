@@ -8,6 +8,7 @@ a = Analysis(
         ('vaad/001.sql', 'vaad'),
         ('vaad/002.sql', 'vaad'),
         ('vaad/003.sql', 'vaad'),
+        ('vaad/004.sql', 'vaad'),
         ('vaad/icon.ico', 'vaad'),
     ],
     hiddenimports=[],

@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from .__version__ import APP_TITLE, __version__
 from .excel import write_xlsx
-from .ledger import LABELS, Ledger, METHODS
+from .ledger import ACCOUNTS, LABELS, Ledger, METHODS, default_account
 from .reports import (
     build_receipt_html,
     build_report_html,
@@ -28,6 +28,7 @@ from .reports import (
 from .store import Problem, ROLES, Store, configure_logging, has_permission, money, valid_day
 from .theme import COLORS, FONT, ROW_HEIGHT
 from .ui_bank import render_bank_import
+from .ui_matrix import render_annual_matrix
 from .ui_settings import (
     render_audit_page,
     render_backups_page,
@@ -67,7 +68,6 @@ def unit_name(unit):
 
 
 def _cell_to_excel(value):
-    """Convert formatted ₪ string to float for Excel numeric columns while preserving text."""
     if isinstance(value, (int, float)):
         return value
     text = str(value or "").replace("\u200e", "").strip()
@@ -81,14 +81,33 @@ def _cell_to_excel(value):
 
 
 class App(tk.Tk):
+    # Hierarchical 3-section navigation: (section_title, [(page_index, icon, label), ...])
+    NAV_GROUPS = (
+        ("סקירה וגבייה", (
+            (0, "🏠", "לוח בקרה"),
+            (1, "📅", "לוח גבייה שנתי"),
+            (2, "💳", "תשלומים ובנק"),
+        )),
+        ("ניהול שוטף", (
+            (3, "🏢", "דיירים ודירות"),
+            (4, "💰", "קופה ותנועות"),
+            (5, "🔧", "ספקים"),
+        )),
+        ("דוחות ומערכת", (
+            (6, "📊", "דוחות וניתוחים"),
+            (7, "⚙️", "הגדרות וניהול"),
+        )),
+    )
+
     PAGES = (
         "לוח בקרה",
+        "לוח גבייה שנתי",
+        "תשלומים ובנק",
         "דיירים ודירות",
-        "גבייה ותשלומים",
-        "תנועות כספיות",
+        "קופה ותנועות",
         "ספקים",
         "דוחות וניתוחים",
-        "הגדרות",
+        "הגדרות וניהול",
     )
 
     def __init__(self, store):
@@ -102,8 +121,8 @@ class App(tk.Tk):
         self.mode = None
 
         self.title(APP_TITLE)
-        self.geometry("1280x800")
-        self.minsize(960, 660)
+        self.geometry("1340x820")
+        self.minsize(1020, 680)
         self.configure(bg=COLORS["background"])
         self._apply_icon()
         self._configure_styles()
@@ -213,7 +232,7 @@ class App(tk.Tk):
             child.destroy()
 
     # ------------------------------------------------------------------
-    # Login & Setup
+    # Login & Setup (Pre-filled for Shahrai 14, 16, 18 + Bank/Cash split)
     # ------------------------------------------------------------------
 
     def lock(self, notice=""):
@@ -227,7 +246,7 @@ class App(tk.Tk):
         tk.Label(outer, text="ניהול ועד הבית", bg=COLORS["surface"], fg=COLORS["nav"], font=(FONT, 26, "bold")).pack()
         tk.Label(
             outer,
-            text=self.store.get("complex", "שחריי 14 · 16 · 18"),
+            text=self.store.get("complex", "שחראי 14 · 16 · 18"),
             bg=COLORS["surface"],
             fg=COLORS["muted"],
             font=(FONT, 12),
@@ -263,7 +282,7 @@ class App(tk.Tk):
             field.bind("<Return>", lambda _: login())
             field.focus_set()
         else:
-            ttk.Button(outer, text="הגדרת מערכת חדשה", style="Primary.TButton", command=self.setup).pack(fill="x", ipady=3)
+            ttk.Button(outer, text="הגדרת מערכת חדשה (שחראי 14, 16, 18)", style="Primary.TButton", command=self.setup).pack(fill="x", ipady=4)
             ttk.Button(outer, text="שחזור מגיבוי ממחשב קודם", command=self.restore).pack(fill="x", pady=(10, 0), ipady=2)
 
         tk.Label(outer, text=f"גרסה {__version__} · עבודה מקומית (OFFLINE)", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 8)).pack(pady=(18, 0))
@@ -272,25 +291,36 @@ class App(tk.Tk):
         defaults = str(self.store.path.parent / "backups")
         fields = [
             ("name", "שם ועד הבית", "ועד הבית", None),
-            ("complex", "שם המתחם", "שחריי 14, 16, 18", None),
-            ("start", "תאריך תחילת הניהול", date_text(today()), None),
-            ("initial", "יתרת קופה בשקלים", "0", None),
+            ("complex", "שם המתחם", "שחראי 14, 16, 18", None),
+            ("start", "תאריך תחילת ניהול", "01/01/2026", None),
+            ("bank", "יתרה נוכחית בבנק (₪)", "0", None),
+            ("cash", "יתרה נוכחית במזומן (₪)", "0", None),
             ("password", "סיסמת מנהל ראשי (8+ תווים)", "", "password"),
             ("backup", "תיקיית גיבוי", defaults, "folder"),
-            ("rate", "תעריף חודשי בשקלים", "100", None),
-            ("split", "מספר הדירה המחולקת בבניין 16", "", None),
+            ("rate", "תעריף חודשי רגיל (₪)", "100", None),
+            ("split", "מספר/תיאור הדירה המחולקת בבניין 16", "מחולקת", None),
+            ("load_excel", "טעינת 21 הדירות ונתוני האקסל (2025–2027)", "כן (מומלץ)", ("כן (מומלץ)", "דירות בלבד ללא היסטוריית תשלומים")),
         ]
 
         def save(v):
+            bank_ag = money(v["bank"])
+            cash_ag = money(v["cash"])
             self.store.setup(
-                v["name"], v["complex"], iso(v["start"]), money(v["initial"]),
+                v["name"], v["complex"], iso(v["start"]), bank_ag + cash_ag,
                 v["password"], v["backup"], money(v["rate"]), v["split"],
+                initial_bank=bank_ag, initial_cash=cash_ag, seed_shahrai_names=True,
             )
             users = self.store.list_users(active_only=True)
             self.user = dict(users[0]) if users else {"id": None, "username": "admin", "display_name": "מנהל ראשי", "role": "admin"}
+            if v["load_excel"].startswith("כן"):
+                self.ledger.load_shahrai_excel_data(target_bank=bank_ag, target_cash=cash_ag, actor=self.user)
             self.after_idle(self.enter)
 
-        Dialog(self, "הגדרת מערכת חדשה", fields, save)
+        Dialog(self, "הגדרת מערכת · שחראי 14, 16, 18", fields, save)
+
+    # ------------------------------------------------------------------
+    # Hierarchical Sidebar & Main Shell
+    # ------------------------------------------------------------------
 
     def enter(self):
         self.ledger.generate()
@@ -298,12 +328,12 @@ class App(tk.Tk):
         self._touch_activity()
         self.reset()
 
-        sidebar = tk.Frame(self, bg=COLORS["nav"], width=212)
+        sidebar = tk.Frame(self, bg=COLORS["nav"], width=224)
         sidebar.pack(side="right", fill="y")
         sidebar.pack_propagate(False)
 
-        tk.Label(sidebar, text="ועד הבית", bg=COLORS["nav"], fg="white", font=(FONT, 19, "bold"), anchor="e").pack(fill="x", padx=18, pady=(22, 2))
-        tk.Label(sidebar, text=self.store.get("complex"), bg=COLORS["nav"], fg="#CBD5E1", anchor="e", wraplength=175, justify="right").pack(fill="x", padx=18, pady=(0, 8))
+        tk.Label(sidebar, text="ועד הבית", bg=COLORS["nav"], fg="white", font=(FONT, 19, "bold"), anchor="e").pack(fill="x", padx=18, pady=(20, 2))
+        tk.Label(sidebar, text=self.store.get("complex"), bg=COLORS["nav"], fg="#CBD5E1", anchor="e", wraplength=186, justify="right").pack(fill="x", padx=18, pady=(0, 8))
 
         role_badge = tk.Label(
             sidebar,
@@ -315,67 +345,68 @@ class App(tk.Tk):
             padx=10,
             pady=4,
         )
-        role_badge.pack(fill="x", padx=14, pady=(0, 16))
+        role_badge.pack(fill="x", padx=14, pady=(0, 10))
 
         self.sidebar = sidebar
-        self.compact = False
+        self.nav = {}
+
+        for grp_title, items in self.NAV_GROUPS:
+            tk.Label(
+                sidebar, text=grp_title, bg=COLORS["nav"], fg="#64748B",
+                font=(FONT, 8, "bold"), anchor="e", padx=16,
+            ).pack(fill="x", pady=(10, 2))
+            for idx, icon, name in items:
+                btn = tk.Button(
+                    sidebar, text=f"{name}  {icon}", anchor="e", padx=14, pady=8, relief="flat", borderwidth=0,
+                    bg=COLORS["nav"], fg="#F1F5F9", activebackground=COLORS["nav_hover"], activeforeground="white",
+                    font=(FONT, 10, "bold"), cursor="hand2", command=lambda i=idx: self.show(i),
+                )
+                btn.pack(fill="x", padx=10, pady=1)
+                self.nav[idx] = btn
 
         tk.Button(
-            sidebar, text="נעילת המערכת", anchor="e", padx=15, pady=8, relief="flat",
+            sidebar, text="נעילת המערכת  🔒", anchor="e", padx=15, pady=9, relief="flat",
             bg=COLORS["nav"], fg="#FCA5A5", activebackground="#1E293B", activeforeground="#FECACA",
             command=self.lock, cursor="hand2",
-        ).pack(side="bottom", fill="x", pady=(2, 10))
+        ).pack(side="bottom", fill="x", pady=(4, 12))
 
-        tk.Button(
-            sidebar, text="צמצום תפריט", anchor="e", padx=15, pady=6, relief="flat",
-            bg=COLORS["nav"], fg="#CBD5E1", activebackground="#1E293B", activeforeground="white",
-            command=self.toggle_sidebar, cursor="hand2",
-        ).pack(side="bottom", fill="x", pady=2)
-
-        self.nav = []
-        for i, name in enumerate(self.PAGES):
-            btn = tk.Button(
-                sidebar, text=name, anchor="e", padx=16, pady=10, relief="flat", borderwidth=0,
-                bg=COLORS["nav"], fg="white", activebackground=COLORS["nav_hover"], activeforeground="white",
-                font=(FONT, 10, "bold"), cursor="hand2", command=lambda idx=i: self.show(idx),
-            )
-            btn.pack(fill="x", padx=10, pady=2)
-            self.nav.append(btn)
-
-        self.main = ttk.Frame(self, padding=(22, 16))
+        self.main = ttk.Frame(self, padding=(22, 14))
         self.main.pack(side="right", fill="both", expand=True)
         self.show(0)
 
     def show(self, index, mode=None):
         self.page, self.mode = index, mode
-        for i, button in enumerate(self.nav):
+        for i, button in self.nav.items():
             button.configure(bg=COLORS["nav_active"] if i == index else COLORS["nav"])
         for child in self.main.winfo_children():
             child.destroy()
 
         header = ttk.Frame(self.main)
         header.pack(fill="x", pady=(0, 10))
-        ttk.Label(header, text=self.PAGES[index], font=(FONT, 20, "bold"), anchor="e").pack(side="right")
-        ttk.Label(header, text=date_text(today()), foreground=COLORS["muted"], font=(FONT, 10)).pack(side="left", pady=6)
+        ttk.Label(header, text=self.PAGES[index], font=(FONT, 19, "bold"), anchor="e").pack(side="right")
+
+        # Persistent live mini-balances pill on the left of every page header
+        bals = self.ledger.balances()
+        ttk.Label(
+            header,
+            text=f"בנק: {amount(bals['bank'])}   |   מזומן: {amount(bals['cash'])}   |   סה״כ קופה: {amount(bals['total'])}",
+            foreground=COLORS["info"],
+            font=(FONT, 9, "bold"),
+        ).pack(side="left", pady=6)
 
         ttk.Label(self.main, textvariable=self.status, anchor="e", foreground=COLORS["success"], font=(FONT, 9, "bold")).pack(side="bottom", fill="x", pady=(4, 0))
 
         pages = (
-            self.dashboard,
-            self.units,
-            self.collection,
-            self.movements,
-            self.suppliers,
-            self.reports,
-            self.settings,
+            self.dashboard,            # 0
+            lambda: render_annual_matrix(self),  # 1
+            self.collection,           # 2
+            self.units,                # 3
+            self.movements,            # 4
+            self.suppliers,            # 5
+            self.reports,              # 6
+            self.settings,             # 7
         )
         pages[index]()
-
-    def toggle_sidebar(self):
-        self.compact = not self.compact
-        self.sidebar.configure(width=116 if self.compact else 212)
-        for button, name in zip(self.nav, self.PAGES):
-            button.configure(text=name.split(" ")[0] if self.compact else name)
 
     def refresh(self, message="הפעולה נשמרה"):
         self.status.set(message)
@@ -428,7 +459,7 @@ class App(tk.Tk):
 
         for index, label in enumerate(reversed(headers)):
             tree.heading(index, text=label, anchor="e", command=lambda col=index: self.sort_table(tree, col))
-            tree.column(index, width=max(92, len(label) * 9 + 18), minwidth=65, anchor="e")
+            tree.column(index, width=max(90, len(label) * 9 + 18), minwidth=60, anchor="e")
         self.fill(tree, rows)
         return tree
 
@@ -527,21 +558,22 @@ class App(tk.Tk):
             self.status.set(f"נפתח אישור תשלום {data['receipt_no']} להדפסה")
 
     # ------------------------------------------------------------------
-    # Transaction Forms (Payment, Expense/Income, Reversal)
+    # Transaction Forms (Payment, Expense/Income, Bank↔Cash Transfer, Reversal)
     # ------------------------------------------------------------------
 
     def payment(self, unit_id=None):
         self.require("record_payment")
         units = self.ledger.units()
-        choices = {f"{unit_name(u)} · {u['tenant'] or u['owner'] or 'ללא שם'} (#{u['id']})": u["id"] for u in units}
+        choices = {f"בניין {u['building']} · {u['tenant'] or u['owner'] or unit_name(u)} (#{u['id']})": u["id"] for u in units}
         selected = next((label for label, id_ in choices.items() if id_ == unit_id), next(iter(choices), ""))
-        due = lambda label: max(0, self.ledger.account(choices[label])["balance"])
+        due = lambda label: max(0, self.ledger.account(choices[label])["unpaid_total"])
         fields = [
-            ("unit", "יחידת תשלום", selected, list(choices)),
+            ("unit", "יחידת מגורים", selected, list(choices)),
             ("party", "שם המשלם", "", None),
             ("amount", "סכום בשקלים", number(due(selected)), None),
             ("day", "תאריך", date_text(today()), None),
-            ("method", "אמצעי תשלום", METHODS[0], METHODS),
+            ("method", "אמצעי תשלום", METHODS[1], METHODS),
+            ("account", "קופה (בנק / מזומן)", "בנק", ("בנק", "מזומן")),
             ("reference", "אסמכתא", "", None),
             ("notes", "הערות", "", None),
             ("attachment", "צירוף אסמכתא / קבלה (אופציונלי)", "", "file"),
@@ -566,17 +598,22 @@ class App(tk.Tk):
                     f"חוב אחרי: {amount(max(after, 0))}   •   זכות אחרי: {amount(max(-after, 0))}"
                 )
 
-            def update(*_):
+            def update_unit(*_):
                 dialog.values["amount"].set(number(due(dialog.values["unit"].get())))
 
-            dialog.values["unit"].trace_add("write", update)
+            def sync_acct(*_):
+                dialog.values["account"].set(ACCOUNTS[default_account(dialog.values["method"].get())])
+
+            dialog.values["unit"].trace_add("write", update_unit)
+            dialog.values["method"].trace_add("write", sync_acct)
             dialog.values["amount"].trace_add("write", preview)
             preview()
 
         def post(v):
             unit = choices[v["unit"]]
+            rev_acct = {"בנק": "bank", "מזומן": "cash"}
             args = ("payment", money(v["amount"]), iso(v["day"]), v["method"], token)
-            kw = dict(unit=unit, party=v["party"], reference=v["reference"], notes=v["notes"], actor=self.user)
+            kw = dict(unit=unit, party=v["party"], reference=v["reference"], notes=v["notes"], account=rev_acct[v["account"]], actor=self.user)
             try:
                 entry = self.ledger.post(*args, **kw)
             except Problem as exc:
@@ -587,7 +624,7 @@ class App(tk.Tk):
                 entry = self.ledger.post(*args, **kw, allow_duplicate=True)
             if v["attachment"].strip():
                 self.store.add_attachment(entry, v["attachment"].strip(), actor=self.user)
-            self.refresh(f"תשלום #{entry} נשמר · יתרה עדכנית {amount(self.ledger.account(unit)['balance'])}")
+            self.refresh(f"תשלום #{entry} נשמר ({v['account']}) · יתרה {amount(self.ledger.account(unit)['balance'])}")
             if messagebox.askyesno("אישור תשלום", f"תשלום #{entry} נרשם בהצלחה.\nלהפיק אישור תשלום (קבלה) כעת?", parent=self):
                 self.show_receipt(entry)
 
@@ -605,7 +642,8 @@ class App(tk.Tk):
             ("party", "ספק או מקור", prefill.get("party", ""), None),
             ("category", "קטגוריה", prefill.get("category", next(iter(categories), "")), list(categories)),
             ("description", "תיאור מפורט", prefill.get("description", ""), None),
-            ("method", "אמצעי תשלום", METHODS[0], METHODS),
+            ("method", "אמצעי תשלום", METHODS[1], METHODS),
+            ("account", "קופה (בנק / מזומן)", "בנק", ("בנק", "מזומן")),
             ("reference", "מספר חשבונית או אסמכתא", "", None),
             ("notes", "הערות", "", None),
             ("attachment", "צירוף חשבונית / קבלה (אופציונלי)", "", "file"),
@@ -614,10 +652,18 @@ class App(tk.Tk):
             fields.insert(3, ("supplier", "כרטיס ספק", prefill.get("supplier", "ללא שיוך"), ("ללא שיוך", *suppliers)))
         token = uuid4().hex
 
+        def footer(dialog, _bar):
+            dialog.values["method"].trace_add(
+                "write", lambda *_: dialog.values["account"].set(ACCOUNTS[default_account(dialog.values["method"].get())])
+            )
+
         def save(v):
             value = money(v["amount"])
-            if kind == "expense" and self.ledger.cash()[0] - value < 0 and not messagebox.askyesno(
-                "יתרת קופה שלילית", "ההוצאה תיצור יתרה שלילית בקופה. לשמור בכל זאת?", parent=self
+            rev_acct = {"בנק": "bank", "מזומן": "cash"}
+            acct_key = rev_acct[v["account"]]
+            bals = self.ledger.balances()
+            if kind == "expense" and bals[acct_key] - value < 0 and not messagebox.askyesno(
+                "יתרה שלילית", f"ההוצאה תיצור יתרה שלילית בקופת ה{v['account']}. לשמור בכל זאת?", parent=self
             ):
                 return False
             sup_name = v.get("supplier", "ללא שיוך")
@@ -630,15 +676,49 @@ class App(tk.Tk):
                 description=v["description"],
                 reference=v["reference"],
                 notes=v["notes"],
+                account=acct_key,
                 actor=self.user,
             )
             if v["attachment"].strip():
                 self.store.add_attachment(entry, v["attachment"].strip(), actor=self.user)
             if prefill.get("recurring"):
                 self.ledger.match_recurring(prefill["recurring"], prefill["period"], entry, actor=self.user)
-            self.refresh(f"הפעולה נשמרה · #{entry}")
+            self.refresh(f"הפעולה נשמרה ({v['account']}) · #{entry}")
 
-        Dialog(self, label, fields, save)
+        Dialog(self, label, fields, save, footer)
+
+    def transfer_dialog(self):
+        self.require("record_expense")
+        bals = self.ledger.balances()
+        directions = ("הפקדת מזומן לבנק (מזומן ⟵ בנק)", "משיכת מזומן מהבנק (בנק ⟵ מזומן)")
+        fields = [
+            ("direction", "סוג העברה", directions[0], directions),
+            ("amount", "סכום בשקלים", "", None),
+            ("day", "תאריך", date_text(today()), None),
+            ("reference", "אסמכתא", "", None),
+            ("notes", "הערות", "", None),
+        ]
+
+        def save(v):
+            if v["direction"] == directions[0]:
+                from_a, to_a = "cash", "bank"
+            else:
+                from_a, to_a = "bank", "cash"
+            self.ledger.transfer_cash(from_a, to_a, money(v["amount"]), iso(v["day"]), v["reference"], v["notes"], actor=self.user)
+            self.refresh("ההעברה הפנימית בין הבנק למזומן נשמרה")
+
+        Dialog(
+            self,
+            "העברה פנימית בין בנק למזומן",
+            fields,
+            save,
+            footer=lambda _, bar: ttk.Label(
+                bar,
+                text=f"יתרה נוכחית: בנק {amount(bals['bank'])}   |   מזומן {amount(bals['cash'])}   (היתרה הכוללת בקופה אינה משתנה)",
+                anchor="e",
+                foreground=COLORS["info"],
+            ).pack(side="bottom", fill="x", pady=(0, 8)),
+        )
 
     def reversal(self, entry):
         self.require("reverse")
@@ -652,62 +732,68 @@ class App(tk.Tk):
         Dialog(self, "ביטול פעולה", [("reason", "סיבת הביטול", "", None), ("day", "תאריך חשבונאי", date_text(today()), None)], save)
 
     # ------------------------------------------------------------------
-    # Page 0: Dashboard (Spec §9)
+    # Page 0: Dashboard (Hero Bank/Cash Split + Hierarchy + Chart)
     # ------------------------------------------------------------------
 
     def dashboard(self):
         period = today()[:7]
         report = self.ledger.report(period)
         details = self.ledger.details(period)
+        bals = self.ledger.balances()
         expected = sum(c["due"] for _, c, *_ in details)
         received = sum(c["paid"] for _, c, *_ in details)
         debtors = self.debt_rows()
-        credits = sum(max(0, -self.ledger.account(u["id"])["balance"]) for u in self.ledger.units())
 
         paid_count = sum(1 for item in details if item[4] in ("שולם", "פטור"))
         partial_count = sum(1 for item in details if item[4] == "שולם חלקית")
         unpaid_count = sum(1 for item in details if item[4] == "לא שולם")
         rate_pct = f"{received / expected:.0%}" if expected else "—"
 
-        # Fixed 4x2 KPI Card Grid
-        kpis = [
-            ("יתרת הקופה", amount(self.ledger.cash()[0]), "קופה משותפת", COLORS["action"], lambda: self.show(3)),
-            ("הכנסות החודש", amount(report["payment"] + report["income"]), f"תשלומים: {amount(report['payment'])}", COLORS["success"], lambda: self.show(3, "income")),
-            ("הוצאות החודש", amount(-report["expense"]), f"מאזן חודשי: {amount(report['payment'] + report['income'] + report['expense'])}", COLORS["danger"], lambda: self.show(3, "expense")),
-            ("סך חובות דיירים", amount(sum(a["balance"] for _, a in debtors)), f"{len(debtors)} יחידות בחוב", COLORS["warning"], lambda: self.show(2, "debt")),
-            ("יחידות ששילמו החודש", f"{paid_count} / {len(details)}", f"חלקי: {partial_count} · טרם שילמו: {unpaid_count}", COLORS["success"], lambda: self.show(2, "current")),
-            ("אחוז גבייה החודש", rate_pct, f"נגבה {amount(received)} מתוך {amount(expected)}", COLORS["info"], lambda: self.show(2, "current")),
-            ("נותר לגבות החודש", amount(expected - received), f"חודש {period[5:]}/{period[:4]}", COLORS["danger"] if expected > received else COLORS["success"], lambda: self.show(2, "current")),
-            ("יתרות זכות (מקדמות)", amount(credits), "לזכות יחידות", COLORS["info"], lambda: self.show(1)),
+        # Row 1: Hero Cashbox Split (Total / Bank / Cash)
+        hero = ttk.Frame(self.main)
+        hero.pack(fill="x", pady=(0, 6))
+        for col in range(3):
+            hero.columnconfigure(col, weight=1, uniform="hero")
+        hero_cards = [
+            ("סך הכול בקופה המשותפת", amount(bals["total"]), "בנק + מזומן · שחראי 14, 16, 18", COLORS["nav"], lambda: self.show(4)),
+            ("יתרה בחשבון הבנק  🏦", amount(bals["bank"]), "העברות בנקאיות, המחאות והפקדות", COLORS["action"], lambda: self.show(4, "bank")),
+            ("יתרה במזומן בקופה  💵", amount(bals["cash"]), "מזומן ביד נציג הוועד", COLORS["success"], lambda: self.show(4, "cash")),
         ]
+        for idx, (title, val, sub, accent, cmd) in enumerate(hero_cards):
+            MetricCard(hero, title, val, sub, accent, cmd).grid(row=0, column=2 - idx, sticky="nsew", padx=4, pady=2)
 
-        grid = ttk.Frame(self.main)
-        grid.pack(fill="x", pady=(0, 8))
+        # Row 2: Operational KPIs (4 clean cards)
+        ops = ttk.Frame(self.main)
+        ops.pack(fill="x", pady=(0, 8))
         for col in range(4):
-            grid.columnconfigure(col, weight=1, uniform="kpi")
-        for idx, (title, val, sub, accent, cmd) in enumerate(kpis):
-            row_i = idx // 4
-            col_i = 3 - (idx % 4)
-            MetricCard(grid, title, val, sub, accent, cmd).grid(row=row_i, column=col_i, sticky="nsew", padx=4, pady=4)
+            ops.columnconfigure(col, weight=1, uniform="ops")
+        ops_cards = [
+            ("גבייה החודש", f"{amount(received)} ({rate_pct})", f"מתוך {amount(expected)} צפוי · נותר {amount(expected - received)}", COLORS["info"], lambda: self.show(1)),
+            ("יחידות ששילמו החודש", f"{paid_count} / {len(details)}", f"חלקי: {partial_count} · טרם שילמו: {unpaid_count}", COLORS["success"], lambda: self.show(1)),
+            ("סך חובות דיירים", amount(sum(a["unpaid_total"] for _, a in debtors)), f"{len(debtors)} יחידות בפיגור", COLORS["danger"] if debtors else COLORS["success"], lambda: self.show(2, "debt")),
+            ("תזרים החודש", amount(report["payment"] + report["income"] + report["expense"]), f"הכנסות {amount(report['payment'] + report['income'])} · הוצאות {amount(-report['expense'])}", COLORS["warning"], lambda: self.show(4)),
+        ]
+        for idx, (title, val, sub, accent, cmd) in enumerate(ops_cards):
+            MetricCard(ops, title, val, sub, accent, cmd).grid(row=0, column=3 - idx, sticky="nsew", padx=4, pady=2)
 
-        # Quick Actions + Upcoming Recurring Alert
+        # Action bar
         bar = self.bar()
-        self.button(bar, "רישום תשלום", self.payment, primary=True, perm="record_payment")
-        self.button(bar, "רישום הוצאה", lambda: self.movement_form("expense"), perm="record_expense")
-        self.button(bar, "ייבוא תנועות בנק", lambda: self.show(2, "bank"), perm="bank_import")
-        self.button(bar, "רישום הכנסה", lambda: self.movement_form("income"), perm="record_expense")
-        self.button(bar, "חובות פתוחים", lambda: self.show(2, "debt"))
+        self.button(bar, "+ רישום תשלום", self.payment, primary=True, perm="record_payment")
+        self.button(bar, "📅 לוח גבייה שנתי", lambda: self.show(1), primary=True)
+        self.button(bar, "+ רישום הוצאה", lambda: self.movement_form("expense"), perm="record_expense")
+        self.button(bar, "⇄ בנק ↔ מזומן", self.transfer_dialog, perm="record_expense")
+        self.button(bar, "📥 ייבוא בנק", lambda: self.show(2, "bank"), perm="bank_import")
 
         due = self.ledger.recurring_due(today())
         if due:
-            ttk.Button(bar, text=f"⚠ {len(due)} הוצאות קבועות ממתינות", command=lambda: self.show(3, "recurring")).pack(side="left")
+            ttk.Button(bar, text=f"⚠ {len(due)} הוצאות קבועות ממתינות", command=lambda: self.show(4, "recurring")).pack(side="left")
 
-        # Interactive 12-Month Income vs Expense Chart (Spec §9)
+        # Interactive 12-Month Income vs Expense Chart
         series = self.ledger.monthly_series(12)
-        chart = IncomeExpenseChart(self.main, series, height=185)
+        chart = IncomeExpenseChart(self.main, series, height=175)
         chart.pack(fill="x", pady=(0, 8))
 
-        # Split bottom section: Recent Movements (right) + Top Debtors (left)
+        # Split bottom: Recent Movements + Top Debtors
         bottom = ttk.Frame(self.main)
         bottom.pack(fill="both", expand=True)
         bottom.columnconfigure(0, weight=2)
@@ -716,11 +802,11 @@ class App(tk.Tk):
 
         right_box = ttk.Frame(bottom)
         right_box.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        ttk.Label(right_box, text="תנועות כספיות אחרונות", anchor="e", font=(FONT, 11, "bold")).pack(fill="x")
+        ttk.Label(right_box, text="תנועות אחרונות בקופה", anchor="e", font=(FONT, 11, "bold")).pack(fill="x")
         self.table(
-            ("תאריך", "פעולה", "תיאור", "סכום", "יתרה"),
+            ("תאריך", "קופה", "פעולה", "תיאור", "סכום"),
             [
-                (r["id"], (date_text(r["day"]), LABELS[r["kind"]], r["description"] or r["party"], amount(r["cash"]), amount(r["balance"])))
+                (r["id"], (date_text(r["day"]), ACCOUNTS.get(r.get("account", "bank"), "בנק"), LABELS[r["kind"]], r["description"] or r["party"], amount(r["cash"])))
                 for r in reversed(self.ledger.cash()[1][-6:])
             ],
             height=5,
@@ -729,17 +815,132 @@ class App(tk.Tk):
 
         left_box = ttk.Frame(bottom)
         left_box.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        ttk.Label(left_box, text="חובות עיקריים", anchor="e", font=(FONT, 11, "bold")).pack(fill="x")
+        ttk.Label(left_box, text="דיירים בפיגור (לחיצה כפולה לכרטסת)", anchor="e", font=(FONT, 11, "bold")).pack(fill="x")
         debt_tree = self.table(
-            ("יחידה", "דייר", "חוב"),
-            [(u["id"], (unit_name(u), u["tenant"] or u["owner"], amount(a["balance"]))) for u, a in debtors[:6]],
+            ("בניין", "דייר", "חוב"),
+            [(u["id"], (f"בניין {u['building']}", u["tenant"] or u["owner"] or unit_name(u), amount(a["unpaid_total"]))) for u, a in debtors[:6]],
             height=5,
             parent=left_box,
         )
         debt_tree.bind("<Double-1>", lambda e: self.unit_detail(int(debt_tree.identify_row(e.y))) if debt_tree.identify_row(e.y).isdigit() else None)
 
     # ------------------------------------------------------------------
-    # Page 1: Units & Personal Unit Ledger (Spec §3, §10)
+    # Page 2: Monthly Collection, Open Debts & Bank Import
+    # ------------------------------------------------------------------
+
+    def debt_rows(self):
+        data = [(u, self.ledger.account(u["id"])) for u in self.ledger.units()]
+        return sorted(((u, a) for u, a in data if a["unpaid_total"] > 0), key=lambda item: -item[1]["unpaid_total"])
+
+    def debtor_table(self, parent=None):
+        parent = parent or self.main
+        bar = self.bar(parent)
+        sort = self.input(bar, "מיון", "סכום", ("סכום", "שם", "בניין", "דירה"), 10)
+        self.button(bar, "רישום תשלום", lambda: self.payment(self.selection(tree)), primary=True, perm="record_payment")
+        self.button(bar, "פתיחת כרטסת", lambda: self.unit_detail(self.selection(tree)))
+        self.button(bar, "ייצוא Excel", lambda: self.export_xlsx_report("דוח חובות פתוחים", headers, current_rows))
+        self.button(bar, "ייצוא PDF", lambda: self.export_pdf_report("דוח חובות פתוחים", headers, current_rows))
+
+        debt_sum = sum(a["unpaid_total"] for _, a in self.debt_rows())
+        ttk.Label(parent, text=f"סך החובות הפתוחים: {amount(debt_sum)}", anchor="e", font=(FONT, 11, "bold"), foreground=COLORS["danger"]).pack(fill="x", pady=(0, 4))
+
+        headers = ("בניין", "דייר / יחידה", "טלפון", "חוב כולל", "חוב החודש", "חוב קודם", "וותק בימים")
+        tree = self.table(headers, parent=parent)
+        current_rows = []
+
+        def load(*_):
+            nonlocal current_rows
+            data = self.debt_rows()
+            keys = {
+                "שם": lambda x: x[0]["tenant"] or x[0]["owner"],
+                "בניין": lambda x: (x[0]["building"], x[0]["slot"]),
+                "דירה": lambda x: x[0]["apartment"],
+            }
+            if sort.get() in keys:
+                data.sort(key=keys[sort.get()])
+            rows = []
+            for u, a in data:
+                current = a["charges"].get(today()[:7], {}).get("left", 0)
+                age = (date.today() - date.fromisoformat(a["oldest"])).days if a["oldest"] else 0
+                rows.append((u["id"], (f"בניין {u['building']}", u["tenant"] or u["owner"] or unit_name(u), u["phone"], amount(a["unpaid_total"]), amount(current), amount(a["unpaid_total"] - current), age)))
+            current_rows = rows
+            self.fill_tagged(tree, [(k, v, "debt") for k, v in rows])
+
+        sort.trace_add("write", load)
+        tree.bind("<Double-1>", lambda e: self.unit_detail(int(tree.identify_row(e.y))) if tree.identify_row(e.y).isdigit() else None)
+        load()
+
+    def collection(self):
+        if self.mode == "current":
+            self.period = today()[:7]
+        bar = self.bar()
+        self.button(bar, "מעקב חודשי", lambda: self.show(2), primary=self.mode in (None, "current"))
+        self.button(bar, "חובות פתוחים", lambda: self.show(2, "debt"), primary=self.mode == "debt")
+        self.button(bar, "ייבוא תנועות בנק (Excel/CSV)", lambda: self.show(2, "bank"), primary=self.mode == "bank", perm="bank_import")
+        self.button(bar, "רישום תשלום ידני", self.payment, primary=True, perm="record_payment")
+
+        if self.mode == "debt":
+            self.debtor_table()
+            return
+        if self.mode == "bank":
+            render_bank_import(self, self.main)
+            return
+
+        filters = self.bar()
+        month = self.input(filters, "חודש", self.period[5:], tuple(f"{m:02d}" for m in range(1, 13)), 5)
+        year = self.input(filters, "שנה", self.period[:4], width=7)
+        self.button(filters, "הצגה", lambda: load())
+        self.button(filters, "תשלום ליחידה", lambda: self.payment(self.selection(tree)), perm="record_payment")
+        self.button(filters, "תיקון או פטור", lambda: adjust(), perm="adjust")
+        self.button(filters, "ייצוא Excel", lambda: self.export_xlsx_report(f"גבייה {self.period}", headers, current_rows))
+        self.button(filters, "ייצוא PDF", lambda: self.export_pdf_report(f"דוח גבייה חודשי · {self.period}", headers, current_rows))
+
+        summary_var = tk.StringVar()
+        ttk.Label(self.main, textvariable=summary_var, anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(0, 4))
+
+        headers = ("בניין", "דייר / דירה", "חיוב", "שולם", "נותר", "חוב קודם", "זכות", "מצב")
+        tree = self.table(headers)
+        current_rows = []
+
+        def load():
+            nonlocal current_rows
+            try:
+                y_val = int(year.get().strip())
+                m_val = int(month.get().strip())
+                self.period = date(y_val, m_val, 1).isoformat()[:7]
+            except ValueError:
+                raise Problem("יש להזין שנה וחודש תקינים")
+            details = self.ledger.details(self.period)
+            tag_map = {"שולם": "paid", "פטור": "paid", "שולם חלקית": "partial", "לא שולם": "debt"}
+            tagged = []
+            plain = []
+            for u, c, older, credit, status in details:
+                vals = (f"בניין {u['building']}", u["tenant"] or u["owner"] or unit_name(u), amount(c["due"]), amount(c["paid"]), amount(c["left"]), amount(older), amount(credit), status)
+                plain.append((u["id"], vals))
+                tagged.append((u["id"], vals, tag_map.get(status, "")))
+            current_rows = plain
+            self.fill_tagged(tree, tagged)
+            exp = sum(c["due"] for _, c, *_ in details)
+            rec = sum(c["paid"] for _, c, *_ in details)
+            pct = f"{rec / exp:.0%}" if exp else "—"
+            summary_var.set(f"צפי גבייה: {amount(exp)}   ·   נגבה: {amount(rec)} ({pct})   ·   נותר לגבות: {amount(exp - rec)}")
+
+        def adjust():
+            self.require("adjust")
+            unit = self.selection(tree)
+            charge = self.ledger.account(unit)["charges"][self.period]
+
+            def save(v):
+                self.ledger.adjust(unit, self.period, money(v["amount"]), v["reason"], actor=self.user)
+                self.refresh("החיוב עודכן")
+
+            Dialog(self, "תיקון חיוב או פטור", [("amount", "סכום חדש בשקלים (0 לפטור)", number(charge["due"]), None), ("reason", "סיבה", "", None)], save)
+
+        tree.bind("<Double-1>", lambda e: self.unit_detail(int(tree.identify_row(e.y))) if tree.identify_row(e.y).isdigit() else None)
+        load()
+
+    # ------------------------------------------------------------------
+    # Page 3: Units & Personal Unit Ledger (כרטסת אישית)
     # ------------------------------------------------------------------
 
     def units(self):
@@ -758,25 +959,26 @@ class App(tk.Tk):
         self.button(actions, "הוספת יחידה", self.add_unit_dialog, perm="manage_units")
         self.button(actions, "ייצוא Excel", self.export_data)
 
-        tree = self.table(("בניין", "דירה", "יחידה", "בעלים", "שוכר", "טלפון", "תעריף", "יתרה", "מצב"))
+        tree = self.table(("בניין", "דירה", "יחידה", "בעלים", "שוכר", "טלפון", "תעריף", "חוב / יתרה", "מצב"))
 
         def load(*_):
             result = []
             for u in self.ledger.units():
-                balance = self.ledger.account(u["id"])["balance"]
+                acc = self.ledger.account(u["id"])
+                balance = acc["balance"]
                 flag = state.get()
                 flags = (
                     "הכול",
-                    "חוב" if balance > 0 else "זכות" if balance < 0 else "מאוזן",
+                    "חוב" if acc["unpaid_total"] > 0 else "זכות" if balance < 0 else "מאוזן",
                     "פעילה" if u["active"] else "לא פעילה",
                 )
                 apartment = u["apartment"] if not u["apartment"].startswith("@") else ""
-                searchable = " ".join((str(u["building"]), apartment, u["owner"], u["tenant"], u["phone"], u["email"])).casefold()
+                searchable = " ".join((str(u["building"]), apartment, u["owner"], u["tenant"], u["phone"], u["email"], u["notes"])).casefold()
                 if flag in flags and building.get() in ("הכול", str(u["building"])) and query.get().strip().casefold() in searchable:
-                    tag = "debt" if balance > 0 else ("credit" if balance < 0 else "")
+                    tag = "debt" if acc["unpaid_total"] > 0 else ("credit" if balance < 0 else "paid")
                     result.append((
                         u["id"],
-                        (u["building"], apartment or "טרם זוהתה", u["subunit"], u["owner"], u["tenant"], u["phone"], amount(u["rate"] or 0), amount(balance), flags[2]),
+                        (f"בניין {u['building']}", apartment or "טרם זוהתה", u["subunit"], u["owner"], u["tenant"], u["phone"], amount(u["rate"] or 0), amount(balance), flags[2]),
                         tag,
                     ))
             self.fill_tagged(tree, result)
@@ -790,7 +992,7 @@ class App(tk.Tk):
         self.require("manage_units")
         fields = [
             ("building", "בניין", "14", ("14", "16", "18")),
-            ("apartment", "מספר דירה", "", None),
+            ("apartment", "מספר / שם דירה", "", None),
             ("subunit", "יחידת משנה (אופציונלי, לדוג׳ א/ב)", "", None),
             ("rate", "תעריף חודשי בשקלים", number(int(self.store.get("rate", "10000"))), None),
             ("owner", "שם בעלים", "", None),
@@ -811,18 +1013,18 @@ class App(tk.Tk):
         Dialog(self, "הוספת יחידת מגורים", fields, save)
 
     def unit_detail(self, unit):
-        self.show(1, ("unit", unit))
+        self.show(3, ("unit", unit))
 
     def unit_sheet(self, unit):
         row = next(u for u in self.ledger.units() if u["id"] == unit)
         account = self.ledger.account(unit)
         bal = account["balance"]
-        bal_color = COLORS["danger"] if bal > 0 else (COLORS["info"] if bal < 0 else COLORS["success"])
+        bal_color = COLORS["danger"] if account["unpaid_total"] > 0 else (COLORS["info"] if bal < 0 else COLORS["success"])
 
         ttk.Label(
             self.main,
-            text=f"{unit_name(row)}   ·   מזהה {unit}   ·   יתרה עדכנית: {amount(bal)}",
-            anchor="e", font=(FONT, 16, "bold"), foreground=bal_color,
+            text=f"בניין {row['building']} · {row['tenant'] or row['owner'] or unit_name(row)}   ·   חוב פתוח: {amount(account['unpaid_total'])}   ·   יתרה כוללת: {amount(bal)}",
+            anchor="e", font=(FONT, 15, "bold"), foreground=bal_color,
         ).pack(fill="x", pady=(0, 2))
         ttk.Label(
             self.main,
@@ -841,7 +1043,7 @@ class App(tk.Tk):
                 self.ledger.opening(unit, money(v["amount"]), actor=self.user)
                 self.refresh("יתרת הפתיחה נשמרה")
             self.button(bar, "יתרת פתיחה", lambda: Dialog(self, "יתרת פתיחה", [("amount", "חוב חיובי או זכות שלילית בשקלים", "0", None)], opening), perm="manage_units")
-        self.button(bar, "חזרה לרשימה", lambda: self.show(1))
+        self.button(bar, "חזרה לרשימה", lambda: self.show(3))
 
         filters = self.bar()
         start = self.input(filters, "מתאריך", width=12)
@@ -852,7 +1054,7 @@ class App(tk.Tk):
         self.button(filters, "ייצוא כרטסת PDF", lambda: export_card("pdf"))
         self.button(filters, "הדפסת כרטסת", lambda: export_card("print"))
 
-        headers = ("תאריך", "תיאור", "אמצעי תשלום", "חיוב", "זיכוי", "יתרה", "הערות")
+        headers = ("תאריך", "תיאור", "קופה", "אמצעי תשלום", "חיוב", "זיכוי", "יתרה", "הערות")
         tree = self.table(headers, height=11)
         current_data = []
 
@@ -871,32 +1073,31 @@ class App(tk.Tk):
                 if r["day"] < lo:
                     continue
                 if not data and lo:
-                    data.append((0, ("", "יתרה קודמת", "", "", "", amount(running - r["debit"]), "")))
+                    data.append((0, ("", "יתרה קודמת", "", "", "", "", amount(running - r["debit"]), "")))
                 if r["day"] <= hi:
-                    desc = LABELS[r["kind"]] + (f" · {r['period']}" if r["period"] else "")
+                    period_ref = r["period"] or r["for_period"]
+                    desc = LABELS[r["kind"]] + (f" · {period_ref}" if period_ref else "")
                     if r["original"]:
                         desc += f" · ביטול #{r['original']}"
+                    acct_lbl = ACCOUNTS.get(r["account"], "—") if r["cash"] != 0 else "—"
                     data.append((
                         r["id"],
                         (
-                            date_text(r["day"]),
-                            desc,
-                            r["method"] or "—",
+                            date_text(r["day"]), desc, acct_lbl, r["method"] or "—",
                             amount(r["debit"]) if r["debit"] > 0 else "",
                             amount(-r["debit"]) if r["debit"] < 0 else "",
-                            amount(running),
-                            r["notes"],
+                            amount(running), r["notes"],
                         ),
                     ))
             if lo and not data:
-                data.append((0, ("", "יתרה קודמת", "", "", "", amount(running), "")))
+                data.append((0, ("", "יתרה קודמת", "", "", "", "", amount(running), "")))
             current_data = data
             self.fill(tree, data)
 
         def export_card(fmt):
             title = f"כרטסת יחידה · {unit_name(row)}"
             sub = f"בעלים: {row['owner'] or '—'} · שוכר: {row['tenant'] or '—'}"
-            kpis = [("יתרה עדכנית", amount(bal)), ("תעריף חודשי", amount(row["rate"] or 0))]
+            kpis = [("חוב פתוח", amount(account["unpaid_total"])), ("יתרה כוללת", amount(bal)), ("תעריף חודשי", amount(row["rate"] or 0))]
             if fmt == "xlsx":
                 self.export_xlsx_report(title, headers, current_data)
             elif fmt == "pdf":
@@ -906,7 +1107,6 @@ class App(tk.Tk):
 
         load()
 
-        # Occupants history panel (Spec §3)
         occupants = self.ledger.unit_occupants(unit)
         if occupants:
             ttk.Label(self.main, text="היסטוריית דיירים ובעלים קודמים", anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(6, 2))
@@ -943,7 +1143,7 @@ class App(tk.Tk):
     def edit_unit(self, row):
         self.require("manage_units")
         keys = ("apartment", "owner", "tenant", "phone", "email", "notes")
-        labels = ("מספר דירה", "שם בעלים", "שם שוכר", "טלפון", "דואר אלקטרוני", "הערות")
+        labels = ("מספר / שם דירה", "שם בעלים", "שם שוכר", "טלפון", "דואר אלקטרוני", "הערות")
         fields = [(k, label, "" if k == "apartment" and row[k].startswith("@") else row[k], None) for k, label in zip(keys, labels)]
         fields.append(("active", "מצב", "פעילה" if row["active"] else "לא פעילה", ("פעילה", "לא פעילה")))
 
@@ -966,122 +1166,7 @@ class App(tk.Tk):
         Dialog(self, "שינוי תעריף", [("amount", "תעריף בשקלים", number(current), None), ("day", "מועד תחולה", date_text(today()), None)], save)
 
     # ------------------------------------------------------------------
-    # Page 2: Collection, Debts & Bank Import (Spec §5, §6)
-    # ------------------------------------------------------------------
-
-    def debt_rows(self):
-        data = [(u, self.ledger.account(u["id"])) for u in self.ledger.units()]
-        return sorted(((u, a) for u, a in data if a["balance"] > 0), key=lambda item: -item[1]["balance"])
-
-    def debtor_table(self, parent=None):
-        parent = parent or self.main
-        bar = self.bar(parent)
-        sort = self.input(bar, "מיון", "סכום", ("סכום", "שם", "בניין", "דירה"), 10)
-        self.button(bar, "רישום תשלום", lambda: self.payment(self.selection(tree)), primary=True, perm="record_payment")
-        self.button(bar, "פתיחת כרטסת", lambda: self.unit_detail(self.selection(tree)))
-        self.button(bar, "ייצוא Excel", lambda: self.export_xlsx_report("דוח חובות פתוחים", headers, current_rows))
-        self.button(bar, "ייצוא PDF", lambda: self.export_pdf_report("דוח חובות פתוחים", headers, current_rows))
-
-        debt_sum = sum(a["balance"] for _, a in self.debt_rows())
-        ttk.Label(parent, text=f"סך החובות הפתוחים: {amount(debt_sum)}", anchor="e", font=(FONT, 11, "bold"), foreground=COLORS["danger"]).pack(fill="x", pady=(0, 4))
-
-        headers = ("יחידה", "דייר", "טלפון", "חוב כולל", "חוב החודש", "חוב קודם", "וותק בימים")
-        tree = self.table(headers, parent=parent)
-        current_rows = []
-
-        def load(*_):
-            nonlocal current_rows
-            data = self.debt_rows()
-            keys = {
-                "שם": lambda x: x[0]["tenant"] or x[0]["owner"],
-                "בניין": lambda x: (x[0]["building"], x[0]["slot"]),
-                "דירה": lambda x: x[0]["apartment"],
-            }
-            if sort.get() in keys:
-                data.sort(key=keys[sort.get()])
-            rows = []
-            for u, a in data:
-                current = a["charges"].get(today()[:7], {}).get("left", 0)
-                age = (date.today() - date.fromisoformat(a["oldest"])).days if a["oldest"] else 0
-                rows.append((u["id"], (unit_name(u), u["tenant"] or u["owner"], u["phone"], amount(a["balance"]), amount(current), amount(a["balance"] - current), age)))
-            current_rows = rows
-            self.fill_tagged(tree, [(k, v, "debt") for k, v in rows])
-
-        sort.trace_add("write", load)
-        tree.bind("<Double-1>", lambda e: self.unit_detail(int(tree.identify_row(e.y))) if tree.identify_row(e.y).isdigit() else None)
-        load()
-
-    def collection(self):
-        if self.mode == "current":
-            self.period = today()[:7]
-        bar = self.bar()
-        self.button(bar, "מעקב חודשי", lambda: self.show(2), primary=self.mode in (None, "current"))
-        self.button(bar, "חובות פתוחים", lambda: self.show(2, "debt"), primary=self.mode == "debt")
-        self.button(bar, "ייבוא תנועות בנק (Excel/CSV)", lambda: self.show(2, "bank"), primary=self.mode == "bank", perm="bank_import")
-        self.button(bar, "רישום תשלום ידני", self.payment, primary=True, perm="record_payment")
-
-        if self.mode == "debt":
-            self.debtor_table()
-            return
-        if self.mode == "bank":
-            render_bank_import(self, self.main)
-            return
-
-        filters = self.bar()
-        month = self.input(filters, "חודש", self.period[5:], tuple(f"{m:02d}" for m in range(1, 13)), 5)
-        year = self.input(filters, "שנה", self.period[:4], width=7)
-        self.button(filters, "הצגה", lambda: load())
-        self.button(filters, "תשלום ליחידה", lambda: self.payment(self.selection(tree)), perm="record_payment")
-        self.button(filters, "תיקון או פטור", lambda: adjust(), perm="adjust")
-        self.button(filters, "ייצוא Excel", lambda: self.export_xlsx_report(f"גבייה {self.period}", headers, current_rows))
-        self.button(filters, "ייצוא PDF", lambda: self.export_pdf_report(f"דוח גבייה חודשי · {self.period}", headers, current_rows))
-
-        summary_var = tk.StringVar()
-        ttk.Label(self.main, textvariable=summary_var, anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(0, 4))
-
-        headers = ("יחידה", "דייר", "חיוב", "שולם", "נותר", "חוב קודם", "זכות", "מצב")
-        tree = self.table(headers)
-        current_rows = []
-
-        def load():
-            nonlocal current_rows
-            try:
-                y_val = int(year.get().strip())
-                m_val = int(month.get().strip())
-                self.period = date(y_val, m_val, 1).isoformat()[:7]
-            except ValueError:
-                raise Problem("יש להזין שנה וחודש תקינים")
-            details = self.ledger.details(self.period)
-            tag_map = {"שולם": "paid", "פטור": "paid", "שולם חלקית": "partial", "לא שולם": "debt"}
-            tagged = []
-            plain = []
-            for u, c, older, credit, status in details:
-                vals = (unit_name(u), u["tenant"] or u["owner"], amount(c["due"]), amount(c["paid"]), amount(c["left"]), amount(older), amount(credit), status)
-                plain.append((u["id"], vals))
-                tagged.append((u["id"], vals, tag_map.get(status, "")))
-            current_rows = plain
-            self.fill_tagged(tree, tagged)
-            exp = sum(c["due"] for _, c, *_ in details)
-            rec = sum(c["paid"] for _, c, *_ in details)
-            pct = f"{rec / exp:.0%}" if exp else "—"
-            summary_var.set(f"צפי גבייה: {amount(exp)}   ·   נגבה: {amount(rec)} ({pct})   ·   נותר לגבות: {amount(exp - rec)}")
-
-        def adjust():
-            self.require("adjust")
-            unit = self.selection(tree)
-            charge = self.ledger.account(unit)["charges"][self.period]
-
-            def save(v):
-                self.ledger.adjust(unit, self.period, money(v["amount"]), v["reason"], actor=self.user)
-                self.refresh("החיוב עודכן")
-
-            Dialog(self, "תיקון חיוב או פטור", [("amount", "סכום חדש בשקלים (0 לפטור)", number(charge["due"]), None), ("reason", "סיבה", "", None)], save)
-
-        tree.bind("<Double-1>", lambda e: self.unit_detail(int(tree.identify_row(e.y))) if tree.identify_row(e.y).isdigit() else None)
-        load()
-
-    # ------------------------------------------------------------------
-    # Page 3: Financial Movements, Attachments & Recurring (Spec §4, §7)
+    # Page 4: Cashbox (Bank vs Cash) + Movements + Transfers + Recurring
     # ------------------------------------------------------------------
 
     def bounds(self, start, end):
@@ -1095,19 +1180,35 @@ class App(tk.Tk):
         if self.mode == "recurring":
             self.recurring_page()
             return
+        if self.mode == "transfers":
+            self.transfers_page()
+            return
+
+        # 3-card live Bank / Cash / Total banner
+        bals = self.ledger.balances()
+        strip = ttk.Frame(self.main)
+        strip.pack(fill="x", pady=(0, 8))
+        for col in range(3):
+            strip.columnconfigure(col, weight=1, uniform="mstrip")
+        MetricCard(strip, "סך הכול בקופה", amount(bals["total"]), "בנק + מזומן", COLORS["nav"]).grid(row=0, column=2, sticky="nsew", padx=4)
+        MetricCard(strip, "יתרה בבנק 🏦", amount(bals["bank"]), "תנועות בנק והפקדות", COLORS["action"]).grid(row=0, column=1, sticky="nsew", padx=4)
+        MetricCard(strip, "יתרה במזומן 💵", amount(bals["cash"]), "מזומן ביד", COLORS["success"]).grid(row=0, column=0, sticky="nsew", padx=4)
+
         bar = self.bar()
-        self.button(bar, "רישום הוצאה", lambda: self.movement_form("expense"), primary=True, perm="record_expense")
-        self.button(bar, "רישום הכנסה", lambda: self.movement_form("income"), perm="record_expense")
-        self.button(bar, "הוצאות קבועות", lambda: self.show(3, "recurring"))
-        self.button(bar, "חשבוניות וקבלות 📎", lambda: AttachmentsDialog(self, self.selection(tree), can_edit=self.can("attachments")))
+        self.button(bar, "+ רישום הוצאה", lambda: self.movement_form("expense"), primary=True, perm="record_expense")
+        self.button(bar, "+ רישום הכנסה", lambda: self.movement_form("income"), perm="record_expense")
+        self.button(bar, "⇄ העברה בנק ↔ מזומן", self.transfer_dialog, perm="record_expense")
+        self.button(bar, "העברות פנימיות", lambda: self.show(4, "transfers"))
+        self.button(bar, "הוצאות קבועות", lambda: self.show(4, "recurring"))
+        self.button(bar, "חשבוניות 📎", lambda: AttachmentsDialog(self, self.selection(tree), can_edit=self.can("attachments")))
         self.button(bar, "אישור תשלום", lambda: self.show_receipt(self.selection(tree)))
-        self.button(bar, "פרטי תנועה", lambda: self.movement_info(self.selection(tree)))
         self.button(bar, "ביטול פעולה", lambda: self.reversal(self.selection(tree)), perm="reverse")
-        ttk.Label(bar, text=f"יתרת קופה: {amount(self.ledger.cash()[0])}", anchor="e", font=(FONT, 11, "bold"), foreground=COLORS["action"]).pack(side="left")
 
         filters = self.bar()
-        start = self.input(filters, "מתאריך", f"01/{today()[5:7]}/{today()[:4]}" if self.mode else "", width=11)
-        end = self.input(filters, "עד תאריך", date_text(today()) if self.mode else "", width=11)
+        start = self.input(filters, "מתאריך", f"01/{today()[5:7]}/{today()[:4]}" if self.mode in ("income", "expense") else "", width=11)
+        end = self.input(filters, "עד תאריך", date_text(today()) if self.mode in ("income", "expense") else "", width=11)
+        acct_default = {"bank": "בנק", "cash": "מזומן"}.get(self.mode, "הכול")
+        acct_filter = self.input(filters, "קופה", acct_default, ("הכול", "בנק", "מזומן"), 8)
         kinds = {"הכול": None, "הכנסות": ("payment", "income"), "הוצאות": ("expense",), "תשלומי דיירים": ("payment",)}
         kind = self.input(filters, "סוג", {"income": "הכנסות", "expense": "הוצאות"}.get(self.mode, "הכול"), tuple(kinds), 12)
         self.button(filters, "חודש נוכחי", lambda: preset(False))
@@ -1120,7 +1221,7 @@ class App(tk.Tk):
         query = self.input(filters2, "חיפוש", width=16)
         self.button(filters2, "סינון", lambda: load())
 
-        tree = self.table(("תאריך", "מספר", "סוג", "תיאור", "קטגוריה", "יחידה או צד", "אמצעי", "הכנסה", "הוצאה", "יתרה", "קבצים"))
+        tree = self.table(("תאריך", "מספר", "קופה", "סוג", "תיאור", "קטגוריה", "יחידה או צד", "אמצעי", "הכנסה", "הוצאה", "יתרה", "קבצים"))
         tree.bind("<Double-1>", lambda e: self.movement_info(int(tree.identify_row(e.y))) if tree.identify_row(e.y).isdigit() else None)
 
         def preset(yr):
@@ -1130,10 +1231,14 @@ class App(tk.Tk):
 
         def load():
             lo, hi = self.bounds(start.get(), end.get())
-            units = {u["id"]: unit_name(u) for u in self.ledger.units()}
+            units = {u["id"]: f"בניין {u['building']} · {u['tenant'] or u['owner'] or unit_name(u)}" for u in self.ledger.units()}
+            rev_acct = {"בנק": "bank", "מזומן": "cash"}
+            want_acct = rev_acct.get(acct_filter.get())
             entries = []
             for r in reversed(self.ledger.cash()[1]):
                 if not lo <= r["day"] <= hi or (kinds[kind.get()] and r["base_kind"] not in kinds[kind.get()]):
+                    continue
+                if want_acct and r.get("account", "bank") != want_acct:
                     continue
                 if method.get() not in ("הכול", r["method"]) or category.get() not in ("הכול", r["category_name"]):
                     continue
@@ -1145,13 +1250,24 @@ class App(tk.Tk):
                 entries.append((eid, vals, tag))
             self.fill_tagged(tree, entries)
 
+        acct_filter.trace_add("write", lambda *_: load())
         load()
+
+    def transfers_page(self):
+        bar = self.bar()
+        self.button(bar, "⇄ העברה חדשה (בנק ↔ מזומן)", self.transfer_dialog, primary=True, perm="record_expense")
+        self.button(bar, "חזרה לתנועות", lambda: self.show(4))
+        rows = [
+            (t["id"], (date_text(t["day"]), ACCOUNTS[t["from_account"]], ACCOUNTS[t["to_account"]], amount(t["amount"]), t["reference"], t["notes"]))
+            for t in self.ledger.list_transfers()
+        ]
+        self.table(("תאריך", "מקופה", "לקופה", "סכום", "אסמכתא", "הערות"), rows, height=14)
 
     def movement_info(self, entry):
         row = next(r for r in self.ledger.cash()[1] if r["id"] == entry)
         win = tk.Toplevel(self)
         win.title(f"פרטי תנועה #{entry}")
-        win.geometry("540x430")
+        win.geometry("540x450")
         win.transient(self)
         win.grab_set()
         win.configure(bg=COLORS["background"])
@@ -1162,7 +1278,7 @@ class App(tk.Tk):
 
         details = [
             ("תאריך חשבונאי", date_text(row["day"])),
-            ("מועד רישום", f"{date_text(row['recorded'][:10])} {row['recorded'][11:19]}"),
+            ("קופה", ACCOUNTS.get(row.get("account", "bank"), "בנק")),
             ("סכום", amount(row["cash"])),
             ("אמצעי תשלום", row["method"] or "—"),
             ("קטגוריה", row["category_name"] or "—"),
@@ -1172,6 +1288,8 @@ class App(tk.Tk):
             ("הערות", row["notes"] or "—"),
             ("קבצים מצורפים", str(row["attachment_count"])),
         ]
+        if row.get("for_period"):
+            details.append(("עבור חודש", row["for_period"]))
         if row["original"]:
             details.append(("ביטול של פעולה", f"#{row['original']}"))
         if row["reversed_by"]:
@@ -1199,7 +1317,7 @@ class App(tk.Tk):
         self.button(bar, "רישום הוצאה מהמועד", lambda: pay(), perm="record_expense")
         self.button(bar, "שיוך הוצאה קיימת", lambda: link(), perm="manage_recurring")
         self.button(bar, "עריכת תבנית נבחרת", lambda: edit_template(self.selection(tpl_tree)), perm="manage_recurring")
-        self.button(bar, "חזרה לתנועות", lambda: self.show(3))
+        self.button(bar, "חזרה לתנועות", lambda: self.show(4))
 
         ttk.Label(self.main, text="מועדים ממתינים לרישום", anchor="e", font=(FONT, 12, "bold"), foreground=COLORS["warning"]).pack(fill="x")
         due = self.ledger.recurring_due(today())
@@ -1310,7 +1428,7 @@ class App(tk.Tk):
             Dialog(self, "עריכת הוצאה קבועה" if row else "הוצאה קבועה חדשה", fields, save)
 
     # ------------------------------------------------------------------
-    # Page 4: Suppliers & Supplier Card (Spec §8)
+    # Page 5: Suppliers & Supplier Card
     # ------------------------------------------------------------------
 
     def suppliers(self):
@@ -1319,7 +1437,7 @@ class App(tk.Tk):
             return
         bar = self.bar()
         query = self.input(bar, "חיפוש ספק", width=22)
-        self.button(bar, "פתיחת כרטיס ספק", lambda: self.show(4, ("supplier", self.selection(tree))), primary=True)
+        self.button(bar, "פתיחת כרטיס ספק", lambda: self.show(5, ("supplier", self.selection(tree))), primary=True)
         self.button(bar, "ספק חדש", lambda: self.edit_supplier(None), perm="manage_suppliers")
         self.button(bar, "עריכת ספק", lambda: self.edit_supplier(self.selection(tree)), perm="manage_suppliers")
         self.button(bar, "רישום הוצאה", lambda: self.movement_form("expense"), perm="record_expense")
@@ -1345,7 +1463,7 @@ class App(tk.Tk):
             self.fill(tree, data)
 
         query.trace_add("write", load)
-        tree.bind("<Double-1>", lambda e: self.show(4, ("supplier", int(tree.identify_row(e.y)))) if tree.identify_row(e.y).isdigit() else None)
+        tree.bind("<Double-1>", lambda e: self.show(5, ("supplier", int(tree.identify_row(e.y)))) if tree.identify_row(e.y).isdigit() else None)
         load()
 
     def edit_supplier(self, identifier):
@@ -1381,7 +1499,7 @@ class App(tk.Tk):
         )
         self.button(bar, "עריכת פרטי ספק", lambda: self.edit_supplier(supplier_id), perm="manage_suppliers")
         self.button(bar, "חשבוניות התנועה 📎", lambda: AttachmentsDialog(self, self.selection(tree), can_edit=self.can("attachments")))
-        self.button(bar, "חזרה לספקים", lambda: self.show(4))
+        self.button(bar, "חזרה לספקים", lambda: self.show(5))
 
         filters = self.bar()
         start = self.input(filters, "מתאריך", f"01/01/{date.today().year}", width=11)
@@ -1391,7 +1509,7 @@ class App(tk.Tk):
         self.button(filters, "ייצוא Excel", lambda: self.export_xlsx_report(f"היסטוריית ספק {s['name']}", headers, current_rows))
         ttk.Label(filters, textvariable=period_total_var, font=(FONT, 10, "bold"), foreground=COLORS["action"]).pack(side="left")
 
-        headers = ("תאריך", "מספר", "סוג", "קטגוריה", "תיאור", "אמצעי", "אסמכתא", "סכום", "קבצים")
+        headers = ("תאריך", "מספר", "קופה", "סוג", "קטגוריה", "תיאור", "אמצעי", "אסמכתא", "סכום", "קבצים")
         tree = self.table(headers, height=9)
         current_rows = []
 
@@ -1406,7 +1524,7 @@ class App(tk.Tk):
                 rows.append((
                     r["id"],
                     (
-                        date_text(r["day"]), r["id"], LABELS[r["kind"]], r["category_name"] or "—",
+                        date_text(r["day"]), r["id"], ACCOUNTS.get(r["account"], "בנק"), LABELS[r["kind"]], r["category_name"] or "—",
                         r["description"], r["method"], r["reference"], amount(-r["cash"]),
                         f"📎 {r['attachment_count']}" if r["attachment_count"] else "",
                     ),
@@ -1416,7 +1534,6 @@ class App(tk.Tk):
 
         load()
 
-        # Attached invoices & receipts for this supplier
         atts = self.store.list_attachments(supplier_id=supplier_id)
         if atts:
             ttk.Label(self.main, text="חשבוניות וקבלות מצורפות לספק (לחיצה כפולה לפתיחה)", anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(6, 2))
@@ -1433,8 +1550,9 @@ class App(tk.Tk):
         kind = LABELS[row["kind"]]
         if row["original"]:
             kind += f" · #{row['original']}"
+        acct_lbl = ACCOUNTS.get(row.get("account", "bank"), "בנק")
         base = (
-            date_text(row["day"]), row["id"], kind, row["description"],
+            date_text(row["day"]), row["id"], acct_lbl, kind, row["description"],
             row["category_name"] or "", units.get(row["unit"], row["supplier_name"] or row["party"]),
             row["method"], amount(row["cash"]) if inflow else "", amount(-row["cash"]) if not inflow else "",
             amount(row["balance"]),
@@ -1445,12 +1563,12 @@ class App(tk.Tk):
         return row["id"], base
 
     # ------------------------------------------------------------------
-    # Page 5: All 9 Financial Reports (Spec §11) + PDF / Excel / Print / CSV
+    # Page 6: Reports & Analytics (with Bank/Cash split)
     # ------------------------------------------------------------------
 
     def reports(self):
         options = (
-            "דוח יתרת קופה (חודשי)",
+            "דוח יתרת קופה (בנק ומזומן)",
             "דוח הכנסות חודשי",
             "דוח הוצאות חודשי",
             "דוח חובות דיירים",
@@ -1468,7 +1586,7 @@ class App(tk.Tk):
         option = self.input(bar, "סוג דוח", selected, options, 26)
         start = self.input(bar, "מתאריך", from_date, width=11)
         end = self.input(bar, "עד תאריך", to_date, width=11)
-        self.button(bar, "הצגה", lambda: self.show(5, (option.get(), start.get(), end.get())), primary=True)
+        self.button(bar, "הצגה", lambda: self.show(6, (option.get(), start.get(), end.get())), primary=True)
 
         lo, hi = self.bounds(from_date, to_date)
         if selected == "דוח חובות דיירים":
@@ -1481,15 +1599,16 @@ class App(tk.Tk):
         chart_svg = ""
         subtitle = f"תקופה: {from_date or 'תחילה'} עד {to_date or 'היום'}"
         entries = [r for r in self.ledger.cash()[1] if lo <= r["day"] <= hi]
-        units = {u["id"]: unit_name(u) for u in self.ledger.units()}
+        units = {u["id"]: f"בניין {u['building']} · {u['tenant'] or u['owner'] or unit_name(u)}" for u in self.ledger.units()}
         year = (lo or today())[:4]
         period = (lo or today())[:7]
 
-        if selected == "דוח יתרת קופה (חודשי)":
+        if selected == "דוח יתרת קופה (בנק ומזומן)":
             rep = self.ledger.report(period)
             last = monthrange(int(period[:4]), int(period[5:]))[1]
             month_end = f"{period}-{last:02d}"
-            debts = sum(max(0, self.ledger.account(u["id"], month_end)["balance"]) for u in self.ledger.units())
+            bals_end = self.ledger.balances(through=month_end)
+            debts = sum(max(0, self.ledger.account(u["id"], month_end)["unpaid_total"]) for u in self.ledger.units())
             headers = ("פריט", "סכום")
             labels = [
                 ("יתרת פתיחה לחודש", rep["initial"]),
@@ -1498,44 +1617,51 @@ class App(tk.Tk):
                 ("הכנסות אחרות", rep["income"]),
                 ("סך הכנסות החודש", rep["payment"] + rep["income"]),
                 ("סך הוצאות החודש", -rep["expense"]),
-                ("יתרת סיום בקופה", rep["final"]),
+                ("יתרת סיום כוללת בקופה", rep["final"]),
+                ("מתוכה: יתרה בבנק 🏦", bals_end["bank"]),
+                ("מתוכה: יתרה במזומן 💵", bals_end["cash"]),
                 ("חובות דיירים לסוף החודש", debts),
             ]
             rows = [(i, (lbl, amount(val))) for i, (lbl, val) in enumerate(labels)]
-            kpis = [("יתרת פתיחה", amount(rep["initial"])), ("הכנסות", amount(rep["payment"] + rep["income"])), ("הוצאות", amount(-rep["expense"])), ("יתרת סיום", amount(rep["final"]))]
+            kpis = [
+                ("סה״כ בקופה", amount(bals_end["total"])),
+                ("יתרה בבנק", amount(bals_end["bank"])),
+                ("יתרה במזומן", amount(bals_end["cash"])),
+                ("חובות לסוף החודש", amount(debts)),
+            ]
             subtitle = f"חודש: {period[5:]}/{period[:4]}"
 
         elif selected == "דוח הכנסות חודשי":
-            headers = ("תאריך", "מספר", "סוג", "יחידה / מקור", "תיאור", "אמצעי", "אסמכתא", "סכום")
+            headers = ("תאריך", "מספר", "קופה", "סוג", "יחידה / מקור", "תיאור", "אמצעי", "אסמכתא", "סכום")
             incomes = [r for r in entries if r["base_kind"] in ("payment", "income")]
             total_in = sum(r["cash"] for r in incomes)
             rows = [
-                (r["id"], (date_text(r["day"]), r["id"], LABELS[r["kind"]], units.get(r["unit"], r["party"]), r["description"] or "תשלום ועד", r["method"], r["reference"], amount(r["cash"])))
+                (r["id"], (date_text(r["day"]), r["id"], ACCOUNTS.get(r.get("account", "bank"), "בנק"), LABELS[r["kind"]], units.get(r["unit"], r["party"]), r["description"] or "תשלום ועד", r["method"], r["reference"], amount(r["cash"])))
                 for r in incomes
             ]
-            totals_row = ("סה״כ הכנסות", "", "", "", "", "", "", amount(total_in))
+            totals_row = ("סה״כ הכנסות", "", "", "", "", "", "", "", amount(total_in))
             kpis = [("סך הכנסות בתקופה", amount(total_in)), ("מספר תנועות", str(len(incomes)))]
 
         elif selected == "דוח הוצאות חודשי":
-            headers = ("תאריך", "מספר", "ספק / מקבל", "קטגוריה", "תיאור", "אמצעי", "אסמכתא", "סכום")
+            headers = ("תאריך", "מספר", "קופה", "ספק / מקבל", "קטגוריה", "תיאור", "אמצעי", "אסמכתא", "סכום")
             exps = [r for r in entries if r["base_kind"] == "expense"]
             total_ex = -sum(r["cash"] for r in exps)
             rows = [
-                (r["id"], (date_text(r["day"]), r["id"], r["supplier_name"] or r["party"], r["category_name"] or "—", r["description"], r["method"], r["reference"], amount(-r["cash"])))
+                (r["id"], (date_text(r["day"]), r["id"], ACCOUNTS.get(r.get("account", "bank"), "בנק"), r["supplier_name"] or r["party"], r["category_name"] or "—", r["description"], r["method"], r["reference"], amount(-r["cash"])))
                 for r in exps
             ]
-            totals_row = ("סה״כ הוצאות", "", "", "", "", "", "", amount(total_ex))
+            totals_row = ("סה״כ הוצאות", "", "", "", "", "", "", "", amount(total_ex))
             kpis = [("סך הוצאות בתקופה", amount(total_ex)), ("מספר תנועות", str(len(exps)))]
 
         elif selected == "דוח תשלומים לפי יחידה":
-            headers = ("יחידה", "תאריך", "מספר", "משלם", "אמצעי", "אסמכתא", "סכום")
+            headers = ("יחידה", "תאריך", "מספר", "קופה", "משלם", "אמצעי", "אסמכתא", "סכום")
             payments = sorted((r for r in entries if r["base_kind"] == "payment"), key=lambda r: (r["unit"] or 0, r["day"], r["id"]))
             total_pay = sum(r["cash"] for r in payments)
             rows = [
-                (r["id"], (units.get(r["unit"], ""), date_text(r["day"]), r["id"], r["party"], r["method"], r["reference"], amount(r["cash"])))
+                (r["id"], (units.get(r["unit"], ""), date_text(r["day"]), r["id"], ACCOUNTS.get(r.get("account", "bank"), "בנק"), r["party"], r["method"], r["reference"], amount(r["cash"])))
                 for r in payments
             ]
-            totals_row = ("סה״כ תשלומים", "", "", "", "", "", amount(total_pay))
+            totals_row = ("סה״כ תשלומים", "", "", "", "", "", "", amount(total_pay))
 
         elif selected == "דוח הוצאות לפי ספק":
             headers = ("ספק", "סך הוצאות", "אחוז מסך ההוצאות")
@@ -1558,6 +1684,7 @@ class App(tk.Tk):
 
         elif selected in ("דוח שנתי מסכם", "דוח השוואת הכנסות והוצאות"):
             rep = self.ledger.report(year)
+            bals_y = self.ledger.balances(through=f"{year}-12-31")
             headers = ("חודש", "הכנסות", "הוצאות", "עודף / גירעון", "יתרת פתיחה", "יתרת סיום")
             series = []
             for m in range(1, 13):
@@ -1570,14 +1697,14 @@ class App(tk.Tk):
             kpis = [
                 ("הכנסות שנתיות", amount(rep["payment"] + rep["income"])),
                 ("הוצאות שנתיות", amount(-rep["expense"])),
-                ("תוצאה שנתית", amount(rep["final"] - rep["initial"])),
-                ("יתרת סיום", amount(rep["final"])),
+                ("יתרה בבנק", amount(bals_y["bank"])),
+                ("יתרה במזומן", amount(bals_y["cash"])),
             ]
             subtitle = f"שנת {year}"
             chart_svg = monthly_chart_svg(series)
 
-        else:  # Full movements
-            headers = ("תאריך", "מספר", "סוג", "תיאור", "קטגוריה", "יחידה או צד", "אמצעי", "הכנסה", "הוצאה", "יתרה")
+        else:
+            headers = ("תאריך", "מספר", "קופה", "סוג", "תיאור", "קטגוריה", "יחידה או צד", "אמצעי", "הכנסה", "הוצאה", "יתרה")
             rows = [self.cash_row(r, units) for r in entries]
 
         actions = self.bar()
@@ -1596,7 +1723,7 @@ class App(tk.Tk):
         self.table(headers, display_rows)
 
     # ------------------------------------------------------------------
-    # Page 6: Settings (delegated to ui_settings)
+    # Page 7: Settings
     # ------------------------------------------------------------------
 
     def settings(self):

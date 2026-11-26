@@ -24,7 +24,7 @@ class ProFeatureTests(unittest.TestCase):
         self.store = Store(self.folder / "live.sqlite3")
         self.addCleanup(lambda: self.store.close())
         self.store.setup(
-            "ועד הבית", "שחריי 14, 16, 18", "2025-01-01", 500000, "admin-pass-123",
+            "ועד הבית", "שחראי 14, 16, 18", "2025-01-01", 500000, "admin-pass-123",
             str(self.folder / "backups"), 10000, "3",
         )
         self.ledger = Ledger(self.store)
@@ -55,7 +55,7 @@ class ProFeatureTests(unittest.TestCase):
 
         upgraded = Store(v1_path)
         self.addCleanup(upgraded.close)
-        self.assertEqual(upgraded.db.execute("PRAGMA user_version").fetchone()[0], 3)
+        self.assertEqual(upgraded.db.execute("PRAGMA user_version").fetchone()[0], Store.SCHEMA)
         user = upgraded.authenticate_user("admin", "legacy-secret")
         self.assertIsNotNone(user)
         self.assertEqual(user["role"], "admin")
@@ -238,7 +238,7 @@ class ProFeatureTests(unittest.TestCase):
         self.assertIn("<svg", svg)
 
         html_doc = build_report_html(self.store, "דוח שנתי", ("חודש", "סכום"), [(1, ("01/2025", "100.00 ₪"))], chart_svg=svg)
-        self.assertIn("שחריי 14, 16, 18", html_doc)
+        self.assertIn("שחראי 14, 16, 18", html_doc)
 
         archive = self.folder / "full_export.zip"
         export_full_archive(self.store, self.ledger, archive)

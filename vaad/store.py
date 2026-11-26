@@ -18,6 +18,7 @@ from uuid import uuid4
 import zipfile
 
 from .__version__ import __version__
+from .seed_data import SHAHRAI_DATA
 
 logger = logging.getLogger("vaad")
 
@@ -40,6 +41,7 @@ EXPECTED_TABLES = (
     "settings", "buildings", "units", "unit_status", "fee_rates", "categories", "entries",
     "occupants", "suppliers", "recurring_expenses", "recurring_matches",
     "users", "audit_log", "attachments", "bank_imports", "backup_history",
+    "cash_transfers", "excel_history", "compensation_checks",
 )
 
 
@@ -94,7 +96,7 @@ def has_permission(role, perm):
 
 
 class Store:
-    SCHEMA = 3
+    SCHEMA = 4
     APP_ID = 0x56414144
 
     def __init__(self, path):
@@ -117,6 +119,11 @@ class Store:
             migration = Path(__file__).with_name("003.sql").read_text(encoding="utf-8-sig")
             self.db.executescript(f"BEGIN IMMEDIATE; {migration} PRAGMA user_version=3; COMMIT;")
             self._migrate_legacy_admin()
+            version = 3
+        if version == 3:
+            migration = Path(__file__).with_name("004.sql").read_text(encoding="utf-8-sig")
+            self.db.executescript(f"BEGIN IMMEDIATE; {migration} PRAGMA user_version=4; COMMIT;")
+            self._migrate_v4()
         self.verify(self.db)
 
     def _migrate_legacy_admin(self):
@@ -130,6 +137,16 @@ class Store:
                     "INSERT INTO users(username,display_name,role,password_hash,salt,active) VALUES (?,?,?,?,?,1)",
                     ("admin", "מנהל ראשי", "admin", pwd, salt),
                 )
+
+    def _migrate_v4(self):
+        """Fix Shahrai spelling (שחריי -> שחראי) and initialize split bank/cash opening balances."""
+        with self.write():
+            for key in ("name", "complex", "address"):
+                val = self.get(key)
+                if "שחריי" in val:
+                    self.save(**{key: val.replace("שחריי", "שחראי")})
+            if self.get("initial") != "" and self.get("initial_bank") == "":
+                self.save(initial_bank=self.get("initial", "0"), initial_cash="0")
 
     @property
     def attachments_dir(self):
@@ -408,15 +425,24 @@ class Store:
         (self.attachments_dir / row["stored_name"]).unlink(missing_ok=True)
 
     # ------------------------------------------------------------------
-    # Initial Setup
+    # Initial Setup (with default Shahrai 14/16/18 units & Bank/Cash split)
     # ------------------------------------------------------------------
 
-    def setup(self, name, complex_name, start, initial, password, backup, rate, split):
+    def setup(self, name, complex_name, start, initial, password, backup, rate, split,
+              initial_bank=None, initial_cash=None, seed_shahrai_names=True):
         start = valid_day(start)
         if not name.strip() or not complex_name.strip() or not backup.strip() or not split.strip():
             raise Problem("יש למלא שם ועד, שם מתחם, תיקיית גיבוי ומספר דירה מחולקת")
         if start > date.today().isoformat() or rate <= 0:
             raise Problem("יש להזין מועד התחלה עד היום ותעריף חיובי")
+        if initial_bank is None and initial_cash is None:
+            bank_val = int(initial)
+            cash_val = 0
+        else:
+            bank_val = int(initial_bank or 0)
+            cash_val = int(initial_cash or 0)
+            initial = bank_val + cash_val
+
         with self.write():
             if self.get("start"):
                 raise Problem("המערכת כבר הוגדרה")
@@ -426,6 +452,8 @@ class Store:
                 complex=complex_name.strip(),
                 start=start,
                 initial=initial,
+                initial_bank=bank_val,
+                initial_cash=cash_val,
                 backup=backup.strip(),
                 rate=rate,
                 auto_backup="1",
@@ -434,18 +462,31 @@ class Store:
             )
             for building, count in ((14, 6), (16, 6), (18, 8)):
                 self.db.execute("INSERT INTO buildings VALUES (?,?)", (building, count))
-                for slot in range(1, count + 1):
-                    parts = ("א", "ב") if building == 16 and slot == 1 else ("",)
-                    for index, part in enumerate(parts):
-                        unit = self.db.execute(
-                            "INSERT INTO units(building,slot,apartment,subunit) VALUES (?,?,?,?)",
-                            (building, slot * 2 + index, split.strip() if part else f"@{slot}", part),
-                        ).lastrowid
-                        self.db.execute("INSERT INTO unit_status VALUES (?,?,1)", (unit, start))
-                        self.db.execute(
-                            "INSERT INTO fee_rates VALUES (?,?,?)",
-                            (unit, start, (rate + (index == 0)) // 2 if part else rate),
-                        )
+
+            for item in SHAHRAI_DATA:
+                bldg, slot, apt_label, subunit, resident_name, prev_name, default_rate, *_ = item
+                is_split = bool(subunit)
+                unit_rate = (rate + (subunit == "א")) // 2 if is_split else rate
+                if seed_shahrai_names:
+                    apt = split.strip() if is_split else apt_label
+                    owner_name = resident_name
+                    notes = f"דייר קודם (2025): {prev_name}" if prev_name else ""
+                else:
+                    apt = split.strip() if is_split else f"@{slot // 2}"
+                    owner_name = ""
+                    notes = ""
+                unit_id = self.db.execute(
+                    "INSERT INTO units(building,slot,apartment,subunit,owner,notes) VALUES (?,?,?,?,?,?)",
+                    (bldg, slot, apt, subunit, owner_name, notes),
+                ).lastrowid
+                self.db.execute("INSERT INTO unit_status VALUES (?,?,1)", (unit_id, start))
+                self.db.execute("INSERT INTO fee_rates VALUES (?,?,?)", (unit_id, start, unit_rate))
+                if seed_shahrai_names and prev_name:
+                    self.db.execute(
+                        "INSERT INTO occupants(unit,role,name,arrived,departed,notes) VALUES (?,'owner',?,'2025-01-01','2025-12-31','רישום מהאקסל 2025')",
+                        (unit_id, prev_name),
+                    )
+
             categories = {
                 "expense": "חשמל|ניקיון|מעליות|גינון|תיקונים|תחזוקה|ביטוח|הוצאות כלליות|אחר",
                 "income": "הכנסות כלליות|אחר",
@@ -568,7 +609,7 @@ class Store:
             version = candidate.execute("PRAGMA user_version").fetchone()[0]
             if (
                 candidate.execute("PRAGMA application_id").fetchone()[0] != self.APP_ID
-                or version not in (1, 2, self.SCHEMA)
+                or version not in (1, 2, 3, self.SCHEMA)
                 or candidate.execute("PRAGMA integrity_check").fetchone()[0] != "ok"
                 or candidate.execute("PRAGMA foreign_key_check").fetchone()
             ):

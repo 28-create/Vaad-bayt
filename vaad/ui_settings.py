@@ -1,4 +1,4 @@
-"""Settings sub-pages: Users & RBAC, Audit Log, Categories, and Backup History / Auto-Backup."""
+"""Settings sub-pages: Users & RBAC, Audit Log, Categories, Excel Loader, and Backups."""
 
 from datetime import date
 from pathlib import Path
@@ -7,8 +7,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from .__version__ import __version__
 from .ledger import LABELS
-from .reports import export_full_archive, fmt_date
-from .store import Problem, ROLES
+from .reports import export_full_archive, fmt_date, fmt_money
+from .store import Problem, ROLES, money
 from .theme import COLORS, FONT
 from .ui_widgets import Dialog
 
@@ -22,7 +22,9 @@ ACTION_NAMES = {
     "update_unit": "עדכון יחידה",
     "replace_resident": "החלפת דייר",
     "change_rate": "שינוי תעריף",
-    "opening_balance": "יתרת פתיחה",
+    "opening_balance": "יתרת פתיחה דייר",
+    "update_opening_cashbox": "עדכון יתרות בנק/מזומן",
+    "cash_transfer": "העברה פנימית בנק↔מזומן",
     "adjust_charge": "תיקון חיוב / פטור",
     "post_payment": "רישום תשלום דייר",
     "post_expense": "רישום הוצאה",
@@ -38,6 +40,7 @@ ACTION_NAMES = {
     "add_attachment": "צירוף מסמך",
     "delete_attachment": "הסרת מסמך",
     "bank_import": "ייבוא בנק",
+    "load_excel_seed": "טעינת נתוני אקסל שחראי",
     "backup": "יצירת גיבוי",
 }
 
@@ -45,36 +48,43 @@ ACTION_NAMES = {
 def render_settings_home(app):
     is_admin = app.can("manage_settings")
     sections = [
-        ("פרטי ועד הבית", [
+        ("פרטי ועד הבית וקופה (בנק / מזומן)", [
             ("עריכת פרטים כלליים", app.general, is_admin),
+            ("עדכון יתרות פתיחה (בנק / מזומן)", lambda: edit_opening_cashbox(app), is_admin),
             ("תעריף ברירת מחדל", app.default_rate, app.can("manage_rates")),
-            ("ניהול קטגוריות", lambda: app.show(6, "categories"), is_admin),
+            ("ניהול קטגוריות", lambda: app.show(7, "categories"), is_admin),
+        ]),
+        ("נתוני אקסל שחראי 14, 16 ו-18", [
+            ("טעינת 21 הדירות ונתוני האקסל (2025–2027)", lambda: load_excel_dialog(app), is_admin),
         ]),
         ("משתמשים, הרשאות ואבטחה", [
-            ("ניהול משתמשים והרשאות", lambda: app.show(6, "users"), app.can("manage_users")),
-            ("יומן פעולות (Audit Log)", lambda: app.show(6, "audit"), app.can("view_audit")),
+            ("ניהול משתמשים והרשאות", lambda: app.show(7, "users"), app.can("manage_users")),
+            ("יומן פעולות (Audit Log)", lambda: app.show(7, "audit"), app.can("view_audit")),
             ("שינוי סיסמה אישית", app.password, True),
             ("נעילה אוטומטית", lambda: edit_auto_lock(app), is_admin),
             ("נעילה והתנתקות", app.lock, True),
         ]),
-        ("נתונים, גיבוי והעברה", [
+        ("גיבוי, שחזור והעברה למחשב חדש", [
             ("יצירת גיבוי מלא (כולל מסמכים)", app.backup, app.can("backup")),
             ("שחזור מגיבוי", app.restore, app.can("restore")),
             ("הגדרות גיבוי אוטומטי ותיקייה", lambda: edit_backup_settings(app), is_admin),
-            ("היסטוריית גיבויים", lambda: app.show(6, "backups"), app.can("backup")),
+            ("היסטוריית גיבויים", lambda: app.show(7, "backups"), app.can("backup")),
             ("ייצוא מלא למעבר לתוכנה אחרת (ZIP)", lambda: full_export(app), app.can("backup")),
             ("ייצוא רשימת דיירים (Excel)", app.export_data, True),
         ]),
     ]
 
     for title, actions in sections:
-        ttk.Label(app.main, text=title, anchor="e", font=(FONT, 13, "bold")).pack(fill="x", pady=(10, 3))
-        bar = app.bar()
+        card = tk.Frame(app.main, bg=COLORS["surface"], highlightbackground=COLORS["border"], highlightthickness=1, padx=14, pady=10)
+        card.pack(fill="x", pady=(0, 8))
+        tk.Label(card, text=title, bg=COLORS["surface"], fg=COLORS["nav"], anchor="e", font=(FONT, 11, "bold")).pack(fill="x", pady=(0, 6))
+        bar = tk.Frame(card, bg=COLORS["surface"])
+        bar.pack(fill="x")
         for label, action, allowed in actions:
             btn = ttk.Button(bar, text=label, command=action)
             if not allowed:
                 btn.state(["disabled"])
-            btn.pack(side="right", padx=(5, 0))
+            btn.pack(side="right", padx=(5, 0), pady=2)
 
     last = app.store.get("last_backup")
     stale = not last or (date.today() - date.fromisoformat(last[:10])).days >= 7
@@ -87,27 +97,73 @@ def render_settings_home(app):
         anchor="e",
         foreground=COLORS["warning"] if stale else COLORS["success"],
         font=(FONT, 10, "bold"),
-    ).pack(fill="x", pady=(12, 4))
+    ).pack(fill="x", pady=(6, 2))
 
+    bals = app.ledger.balances()
     lock_mins = app.store.get("auto_lock_minutes", "15")
     ttk.Label(
         app.main,
-        text=f"תיקיית גיבוי: {app.store.get('backup') or 'לא הוגדרה'}   |   נעילה אוטומטית: {lock_mins} דקות",
+        text=f"יתרה בבנק: {fmt_money(bals['bank'])}   |   יתרה במזומן: {fmt_money(bals['cash'])}   |   נעילה אוטומטית: {lock_mins} דקות",
         anchor="e",
         foreground=COLORS["muted"],
     ).pack(fill="x")
     ttk.Label(
         app.main,
-        text=f"מיקום מסד הנתונים: {app.store.path}",
+        text=f"ועד הבית · גרסה {__version__} · {app.store.path} · משתמש: {app.user['display_name']} ({ROLES.get(app.user['role'], '')})",
         anchor="e",
         foreground=COLORS["muted"],
-    ).pack(fill="x", pady=(2, 4))
-    ttk.Label(
-        app.main,
-        text=f"ועד הבית · גרסה {__version__} · SQLite מקומי (OFFLINE) · משתמש פעיל: {app.user['display_name']} ({ROLES.get(app.user['role'], '')})",
-        anchor="e",
-        foreground=COLORS["muted"],
-    ).pack(fill="x", pady=(4, 0))
+    ).pack(fill="x", pady=(2, 0))
+
+
+def edit_opening_cashbox(app):
+    cur_bank = int(app.store.get("initial_bank", app.store.get("initial", "0")) or "0")
+    cur_cash = int(app.store.get("initial_cash", "0") or "0")
+    fmt_num = lambda v: f"{v / 100:.2f}"
+    fields = [
+        ("bank", "יתרת פתיחה בבנק (₪)", fmt_num(cur_bank), None),
+        ("cash", "יתרת פתיחה במזומן (₪)", fmt_num(cur_cash), None),
+    ]
+
+    def save(v):
+        app.ledger.set_opening_cashbox(money(v["bank"]), money(v["cash"]), actor=app.user)
+        app.refresh("יתרות הפתיחה (בנק ומזומן) עודכנו")
+
+    Dialog(app, "עדכון יתרות פתיחה לקופה", fields, save)
+
+
+def load_excel_dialog(app):
+    bals = app.ledger.balances()
+    fmt_num = lambda v: f"{v / 100:.2f}"
+    fields = [
+        ("bank", "יתרה נוכחית אמיתית בבנק (₪)", fmt_num(bals["bank"]), None),
+        ("cash", "יתרה נוכחית אמיתית במזומן (₪)", fmt_num(bals["cash"]), None),
+    ]
+
+    def save(v):
+        count = app.ledger.load_shahrai_excel_data(
+            target_bank=money(v["bank"]),
+            target_cash=money(v["cash"]),
+            actor=app.user,
+        )
+        app.refresh(f"נתוני האקסל נטענו ({count} תשלומי חודשים נוספו) ויתרות הבנק/מזומן נשמרו")
+        messagebox.showinfo(
+            "טעינת נתוני אקסל הושלמה",
+            f"כל 21 הדירות של שחראי 14, 16 ו-18 ונתוני השנים 2025–2027 (כולל שיק פיצויים) נטענו בהצלחה.\nתשלומים חדשים שנקלטו: {count}.",
+            parent=app,
+        )
+
+    Dialog(
+        app,
+        "טעינת נתוני האקסל (שחראי 14, 16, 18)",
+        fields,
+        save,
+        footer=lambda _, bar: ttk.Label(
+            bar,
+            text="הפעולה בטוחה ואינה יוצרת כפילויות. הזינו את היתרות הנוכחיות האמיתיות בבנק ובמזומן כדי לשמור על קופה מדויקת.",
+            anchor="e",
+            foreground=COLORS["muted"],
+        ).pack(side="bottom", fill="x", pady=(0, 8)),
+    )
 
 
 def edit_backup_settings(app):
@@ -175,7 +231,7 @@ def render_users_page(app):
     app.button(bar, "משתמש חדש", lambda: edit_user(None), primary=True)
     app.button(bar, "עריכת משתמש", lambda: edit_user(app.selection(tree)))
     app.button(bar, "איפוס סיסמה", lambda: reset_pwd(app.selection(tree)))
-    app.button(bar, "חזרה להגדרות", lambda: app.show(6))
+    app.button(bar, "חזרה להגדרות", lambda: app.show(7))
 
     users = {u["id"]: u for u in app.store.list_users()}
     tree = app.table(("שם משתמש", "שם תצוגה", "הרשאה", "מצב", "נוצר בתאריך"))
@@ -238,7 +294,7 @@ def render_audit_page(app):
     bar = app.bar()
     query = app.input(bar, "חיפוש ביומן", width=24)
     app.button(bar, "ייצוא Excel", lambda: app.export_xlsx_report("יומן פעולות", headers, current_rows()))
-    app.button(bar, "חזרה להגדרות", lambda: app.show(6))
+    app.button(bar, "חזרה להגדרות", lambda: app.show(7))
 
     headers = ("מועד", "משתמש", "פעולה", "ישות", "פרטים")
     tree = app.table(headers, height=16)
@@ -269,7 +325,7 @@ def render_backups_page(app):
     bar = app.bar()
     app.button(bar, "יצירת גיבוי מלא כעת", app.backup, primary=True)
     app.button(bar, "שחזור מגיבוי", app.restore)
-    app.button(bar, "חזרה להגדרות", lambda: app.show(6))
+    app.button(bar, "חזרה להגדרות", lambda: app.show(7))
 
     kind_labels = {"manual": "ידני", "auto": "אוטומטי", "pre-restore": "לפני שחזור"}
     rows = []
@@ -294,7 +350,7 @@ def render_categories_page(app):
     bar = app.bar()
     app.button(bar, "קטגוריה חדשה", lambda: edit(None), primary=True)
     app.button(bar, "עריכת קטגוריה", lambda: edit(app.selection(tree)))
-    app.button(bar, "חזרה להגדרות", lambda: app.show(6))
+    app.button(bar, "חזרה להגדרות", lambda: app.show(7))
     items = {r["id"]: r for r in app.store.rows("SELECT * FROM categories ORDER BY kind,name")}
     tree = app.table(
         ("שם", "סוג", "מצב"),
