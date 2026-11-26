@@ -7,4 +7,3 @@ if errorlevel 1 (
     py -3 -m vaad
 )
 if errorlevel 1 pause
-

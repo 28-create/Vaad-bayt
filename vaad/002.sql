@@ -42,4 +42,3 @@ CREATE TABLE recurring_matches (
  expense INTEGER NOT NULL UNIQUE REFERENCES entries(id),
  PRIMARY KEY(recurring,period)
 );
-

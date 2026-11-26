@@ -41,4 +41,3 @@ CREATE UNIQUE INDEX monthly_once ON entries(unit,period) WHERE kind='charge';
 CREATE UNIQUE INDEX opening_once ON entries(unit) WHERE kind='opening';
 CREATE INDEX unit_history ON entries(unit,day,id);
 CREATE INDEX cash_history ON entries(day,id) WHERE cash<>0;
-

@@ -162,7 +162,7 @@ class FinancialTests(unittest.TestCase):
         self.assertEqual(self.ledger.cash()[0],497500)
         self.store.db.close()
         self.store.db = Store(self.store.path).db
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0],2)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0],Store.SCHEMA)
         self.assertEqual(self.ledger.cash()[0],497500)
 
     def test_21_recurring_never_posts_cash_until_confirmed(self):
@@ -179,4 +179,3 @@ class FinancialTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

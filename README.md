@@ -1,32 +1,33 @@
-# Vaad Bayt · Phase 1
+# Vaad Bayt · Version 2.0 (שחריי 14, 16 ו-18)
 
-Application Windows locale de gestion d’une caisse commune pour שחריי 14, 16 et 18.
+Application desktop Windows **100 % hors ligne (OFFLINE)** en hébreu RTL pour la gestion d’une caisse commune unique regroupant les immeubles **שחריי 14, 16 et 18** (20 appartements physiques / 21 unités de facturation).
 
-## Lancer et reconstruire
+## Lancer, tester et compiler
 
-Ouvrir `dist\VaadBayt.exe`. L’exécutable embarque Python, Tk et SQLite. Il fonctionne sans connexion Internet. Pour lancer les sources avec Python 3.14 et Tk installés, ouvrir `Lancer.cmd`. Pour reconstruire l’exécutable depuis les sources, installer PyInstaller dans l’environnement de développement puis lancer `Build.cmd`.
+- **Lancer l’exécutable** : ouvrir `dist\VaadBayt.exe` (autonome : Python, Tk et SQLite embarqués, sans Internet).
+- **Lancer depuis les sources** : double-cliquer sur `Lancer.cmd` (ou `python -m vaad`).
+- **Exécuter la suite de tests** : `python -m unittest discover -s tests -v`.
+- **Reconstruire `dist\VaadBayt.exe`** : exécuter `Build.cmd` (lance les tests puis PyInstaller avec `VaadBayt.spec`).
 
-Exécuter les tests avec `py -3 -m unittest discover -s tests -v`. Les tests utilisent des bases temporaires.
+## Fonctionnalités intégrées (v2.0)
 
-## Organisation et modèle de données
+- **Tableau de bord complet** : 8 cartes KPI cliquables (solde caisse, revenus/dépenses du mois, dettes, nombre d’unités payées/impayées, taux de recouvrement, avances), **graphique interactif Revenus vs Dépenses sur 12 mois**, alerte d’échéances récurrentes, mouvements récents et principaux débiteurs.
+- **Unités, résidents & fiche personnelle (`כרטסת אישית`)** : ajout/édition d’unités, suivi de l’historique des occupants (`occupants`), solde détaillé avec moyen de paiement, **export Excel (`.xlsx`) / PDF / impression**, et **reçu de paiement numéroté (`אישור תשלום / קבלה`)**.
+- **Collecte mensuelle & Import bancaire (`ייבוא תנועות בנק`)** : génération automatique sans doublons (100 ₪ / 50 ₪ pour l’appartement divisé), ajustements/exemptions traçables, **import CSV & Excel (`.xlsx`) bancaire** avec suggestion automatique du résident, validation manuelle avant intégration, prévention des doublons (`bank_imports`) et marquage « non lié au Vaad ».
+- **Mouvements, factures jointes & dépenses récurrentes** : pièces jointes (PDF, images, documents) associées aux mouvements et visibles sur la fiche fournisseur, gestion complète des modèles de dépenses récurrentes (création, modification, désactivation, rapprochement résilient aux annulations).
+- **Fournisseurs (`ספקים`)** : fiche complète par fournisseur avec historique des paiements (net des annulations), filtre par période et visionneuse de factures jointes.
+- **9+ rapports financiers** : solde de caisse mensuel, revenus mensuels, dépenses mensuelles, dettes ouvertes, paiements par unité, dépenses par fournisseur, dépenses par catégorie, bilan annuel, comparaison revenus/dépenses (avec graphique SVG), et journal complet — tous exportables en **Excel (`.xlsx`), PDF, HTML imprimable et CSV**.
+- **Utilisateurs, rôles & journal d’audit** : 3 niveaux de permissions (`מנהל ראשי`, `חבר ועד`, `צפייה בלבד`), journal d’audit complet (`audit_log`), verrouillage automatique après inactivité.
+- **Sauvegardes complètes & migration** : sauvegardes manuelles et automatiques (avec rotation) au format **ZIP incluant la base SQLite vérifiée + toutes les factures/reçus joints**, historique des sauvegardes, restauration rétrocompatible (`.zip` et `.sqlite3`), et export complet portable (ZIP Excel multi-onglets + pièces jointes).
 
-- `vaad/store.py` ouvre SQLite, applique le schéma versionné, gère l’authentification locale et utilise l’API SQLite de sauvegarde.
-- `vaad/001.sql` crée les tables `buildings`, `units`, `unit_status`, `fee_rates`, `categories`, `settings` et `entries`. SQLite vérifie les clés étrangères et l’unicité des cotisations.
-- `vaad/ledger.py` gère l’historique des tarifs et des statuts, la génération mensuelle, les écritures et le calcul des soldes.
-- `vaad/ui.py` fournit l’assistant et les six rubriques hébraïques. Les rapports imprimables s’ouvrent dans le navigateur sous forme de fichiers HTML locaux.
-- `tests/test_finance.py` couvre les scénarios comptables, la sauvegarde, la restauration et l’authentification.
+## Architecture
 
-Les écritures enregistrent indépendamment le débit du compte de l’unité et le montant encaissé ou décaissé en agorot. Pour un paiement, ces deux valeurs appartiennent à la même ligne SQLite. Les affectations sont recalculées à partir du journal, en commençant par la dette d’ouverture puis par les cotisations les plus anciennes. Les annulations conservent leur propre date comptable, leur motif et le lien vers l’opération d’origine. Une annulation datée après la clôture du mois d’origine apparaît dans la période de sa propre date.
+- `vaad/001.sql`, `vaad/002.sql`, `vaad/003.sql` — migrations SQLite versionnées (schéma v3).
+- `vaad/store.py` — SQLite, migrations, authentification `scrypt` & RBAC, journal d’audit, pièces jointes, sauvegardes ZIP & restauration, logging rotatif.
+- `vaad/ledger.py` — moteur comptable en *agorot*, unités, occupants, fournisseurs, dépenses récurrentes, séries mensuelles et reçus.
+- `vaad/excel.py` — lecteur/générateur `.xlsx` pur Python (zéro dépendance externe) avec support hébreu RTL natif.
+- `vaad/banking.py` — parseur de relevés bancaires CSV/XLSX, empreintes anti-doublons et suggestion intelligente de résidents.
+- `vaad/reports.py` — rapports HTML RTL professionnels, graphiques SVG, reçus, export PDF natif (Edge/Chrome headless) et archive d’export complet.
+- `vaad/ui.py`, `vaad/ui_widgets.py`, `vaad/ui_bank.py`, `vaad/ui_settings.py`, `vaad/theme.py` — interface desktop hébreu RTL modulaire.
 
-Les cotisations sont générées à l’ouverture de la session et le changement de mois est détecté pendant son utilisation. Pour un début en cours de mois, l’application génère une cotisation entière à la date de démarrage. Les changements de tarif et de statut sont appliqués au moment de générer la cotisation d’un mois, à partir du tarif et du statut applicables au premier jour du mois ou à la date de démarrage pour le premier mois. Les corrections de cotisation saisies aujourd’hui révisent le montant du mois sélectionné, avec une ligne distincte datée d’aujourd’hui dans la fiche de l’unité.
-
-Les données sont conservées sous `%LOCALAPPDATA%\VaadBayt`. Le mot de passe est protégé par scrypt avec un sel aléatoire. Le fichier SQLite et ses sauvegardes sont lisibles par une personne disposant d’un accès à ces fichiers. Utiliser les permissions Windows et un espace de stockage protégé.
-
-## Fonctionnalités et limites
-
-La version comprend la configuration des 21 unités, les fiches des résidents, les cotisations, les paiements, les avances, les dépenses, les recettes, la caisse commune, les corrections traçables, les rapports, le CSV, le verrouillage, la sauvegarde et la restauration locale.
-
-Les numéros non renseignés restent à identifier dans les fiches. Les soldes appartiennent aux unités, et l’application ne gère pas de sous-comptes individuels par occupant. Le passage d’un solde négatif à positif dans une fiche représente un changement d’avance en dette. Les exigences reportées en phase 2, dont la synchronisation, les reçus officiels et l’import bancaire, restent hors périmètre.
-
-Le [guide en hébreu](Guide-he.md) décrit les opérations quotidiennes et le transfert vers un nouvel ordinateur.
-
+Le [guide complet en hébreu](Guide-he.md) détaille l’utilisation quotidienne, les sauvegardes et le transfert vers un nouvel ordinateur.

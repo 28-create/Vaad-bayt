@@ -1,6 +1,19 @@
 @echo off
+setlocal
 cd /d "%~dp0"
-python -m PyInstaller --noconfirm --onefile --windowed --name VaadBayt --add-data "vaad/001.sql;vaad" --add-data "vaad/002.sql;vaad" desktop.py
-if errorlevel 1 exit /b 1
-
-
+echo === Running test suite ===
+python -m unittest discover -s tests -v
+if errorlevel 1 (
+    echo Tests failed! Aborting build.
+    if not defined CI pause
+    exit /b 1
+)
+echo === Building dist\VaadBayt.exe ===
+python -m PyInstaller --clean --noconfirm VaadBayt.spec
+if errorlevel 1 (
+    echo PyInstaller build failed!
+    if not defined CI pause
+    exit /b 1
+)
+echo === Build succeeded: dist\VaadBayt.exe ===
+if not defined CI pause
