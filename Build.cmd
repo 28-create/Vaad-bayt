@@ -15,5 +15,9 @@ if errorlevel 1 (
     if not defined CI pause
     exit /b 1
 )
-echo === Build succeeded: dist\VaadBayt.exe ===
+if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+    echo === Building Windows Installer dist\VaadBayt-Setup.exe ===
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\VaadBayt.iss"
+)
+echo === Build succeeded ===
 if not defined CI pause
