@@ -1,4 +1,4 @@
-"""Bank statement import UI (CSV / Excel) with smart unit matching & approval workflow."""
+"""Bank statement import UI (CSV / Excel) with modern SaaS styling & approval workflow."""
 
 import sqlite3
 import tkinter as tk
@@ -8,7 +8,7 @@ from .banking import commit_bank_rows, parse_bank_file
 from .reports import fmt_date, fmt_money, fmt_unit
 from .store import Problem
 from .theme import COLORS, FONT
-from .ui_widgets import Dialog
+from .ui_widgets import CardFrame, Dialog
 
 ACTION_LABELS = {
     "payment": "תשלום דייר",
@@ -23,8 +23,8 @@ def render_bank_import(app, parent):
     """Render the interactive bank statement reconciliation screen inside `parent`."""
     state = {"rows": [], "file": ""}
     units = app.ledger.units()
-    unit_by_id = {u["id"]: fmt_unit(u) for u in units}
-    unit_choices = {f"{fmt_unit(u)} · {u['tenant'] or u['owner'] or '—'} (#{u['id']})": u["id"] for u in units}
+    unit_by_id = {u["id"]: f"בניין {u['building']} · {u['tenant'] or u['owner'] or fmt_unit(u)}" for u in units}
+    unit_choices = {f"בניין {u['building']} · {u['tenant'] or u['owner'] or fmt_unit(u)} (#{u['id']})": u["id"] for u in units}
     id_to_unit_choice = {uid: lbl for lbl, uid in unit_choices.items()}
 
     income_cats = {
@@ -36,16 +36,16 @@ def render_bank_import(app, parent):
         for r in app.store.rows("SELECT id, name FROM categories WHERE kind='expense' AND active=1 ORDER BY name")
     }
 
-    info = ttk.Label(
-        parent,
-        text="ייבוא תנועות מקובץ Excel (.xlsx) או CSV שהורד מהבנק. המערכת מזהה דיירים אוטומטית ומונעת קליטה כפולה — כל שורה נבדקת לפני אישור.",
-        anchor="e",
-        foreground=COLORS["muted"],
-    )
-    info.pack(fill="x", pady=(0, 8))
+    info_card = CardFrame(parent, padx=14, pady=10, bg=COLORS["info_bg"])
+    info_card.pack(fill="x", pady=(0, 8))
+    tk.Label(
+        info_card.inner,
+        text="📥 ייבוא תנועות מקובץ Excel (.xlsx) או CSV שהורד מהבנק — המערכת מזהה דיירים אוטומטית ומונעת קליטה כפולה. שום תנועה אינה נקלטת לפני אישורך.",
+        bg=COLORS["info_bg"], fg=COLORS["info_dark"], font=(FONT, 9, "bold"), anchor="e",
+    ).pack(fill="x")
 
     bar = app.bar(parent)
-    summary_var = tk.StringVar(value="טרם נטען קובץ בנק")
+    summary_var = tk.StringVar(value="טרם נטען קובץ בנק — לחצו על 'טעינת קובץ בנק' להתחלה")
 
     def load_file():
         path = filedialog.askopenfilename(
@@ -163,7 +163,6 @@ def render_bank_import(app, parent):
         ):
             return
         imported, ignored = commit_bank_rows(app.store, app.ledger, state["rows"], actor=app.user)
-        # Re-parse file to reflect imported status
         if state["file"]:
             state["rows"] = parse_bank_file(state["file"], app.store, app.ledger)
             refresh_table()
@@ -174,18 +173,18 @@ def render_bank_import(app, parent):
             parent=app,
         )
 
-    app.button(bar, "טעינת קובץ בנק (Excel / CSV)", load_file, primary=True)
-    app.button(bar, "עריכת שיוך", edit_row)
+    app.button(bar, "📂 טעינת קובץ בנק (Excel / CSV)", load_file, primary=True)
+    app.button(bar, "עריכת שיוך", edit_row, variant="soft")
     app.button(bar, "סמן כלא קשור לוועד", mark_ignored)
     app.button(bar, "דלג", mark_skip)
-    app.button(bar, "אשר התאמות גבוהות", approve_all_high)
-    app.button(bar, "קליטת שורות מאושרות", commit, primary=True)
+    app.button(bar, "אשר התאמות גבוהות", approve_all_high, variant="soft")
+    app.button(bar, "✓ קליטת שורות מאושרות", commit, variant="success")
 
-    ttk.Label(parent, textvariable=summary_var, anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(0, 6))
+    tk.Label(parent, textvariable=summary_var, bg=COLORS["background"], fg=COLORS["text_secondary"], anchor="e", font=(FONT, 9, "bold")).pack(fill="x", pady=(0, 6))
 
     tree = app.table(
         ("תאריך", "כיוון", "תיאור מהבנק", "סכום", "אסמכתא", "יחידה מוצעת / שיוך", "ביטחון", "פעולה מתוכננת", "סטטוס"),
-        height=14,
+        height=13,
         parent=parent,
     )
     tree.bind("<Double-1>", edit_row)
@@ -198,43 +197,30 @@ def render_bank_import(app, parent):
             dir_lbl = "זכות (כניסה)" if item["direction"] == "credit" else "חובה (יציאה)"
             unit_lbl = unit_by_id.get(item["unit_id"], "—") if item["action"] == "payment" else (item["reason"] or "—")
             if item["already_status"] == "matched":
-                status_lbl = "נקלט בעבר"
-                act_lbl = "כפילות נמנעה"
-                tag = "reversed"
+                status_lbl, act_lbl, tag = "נקלט בעבר", "כפילות נמנעה", "reversed"
                 dup_count += 1
             elif item["already_status"] == "ignored":
-                status_lbl = "סומן בעבר כלא קשור"
-                act_lbl = "כפילות נמנעה"
-                tag = "reversed"
+                status_lbl, act_lbl, tag = "סומן בעבר כלא קשור", "כפילות נמנעה", "reversed"
                 dup_count += 1
             else:
                 act_lbl = ACTION_LABELS.get(item["action"], "דילוג")
                 if item["action"] in ("payment", "income", "expense"):
-                    status_lbl = "מוכן לקליטה"
-                    tag = "paid"
+                    status_lbl, tag = "מוכן לקליטה", "paid"
                     ready_count += 1
                 elif item["action"] == "ignore":
-                    status_lbl = "יסומן כלא קשור"
-                    tag = "partial"
+                    status_lbl, tag = "יסומן כלא קשור", "partial"
                 else:
-                    status_lbl = "ממתין לבדיקה"
-                    tag = ""
+                    status_lbl, tag = "ממתין לבדיקה", ""
             rows_data.append((
                 idx,
                 (
-                    fmt_date(item["day"]),
-                    dir_lbl,
-                    item["description"][:46],
-                    fmt_money(item["amount"]),
-                    item["reference"],
-                    unit_lbl,
-                    item["confidence"],
-                    act_lbl,
-                    status_lbl,
+                    fmt_date(item["day"]), dir_lbl, item["description"][:46],
+                    fmt_money(item["amount"]), item["reference"], unit_lbl,
+                    item["confidence"], act_lbl, status_lbl,
                 ),
                 tag,
             ))
         app.fill_tagged(tree, rows_data)
         summary_var.set(
-            f"סה״כ שורות בקובץ: {len(state['rows'])}   ·   מוכנות לקליטה: {ready_count}   ·   כפילויות שזוהו ונמנעו: {dup_count}"
+            f"סה״כ שורות בקובץ: {len(state['rows'])}   •   מוכנות לקליטה: {ready_count}   •   כפילויות שזוהו ונמנעו: {dup_count}"
         )

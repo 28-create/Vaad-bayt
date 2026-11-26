@@ -1,4 +1,4 @@
-"""Main Hebrew RTL Tkinter desktop application for Vaad Bayt (Shahrai 14, 16, 18)."""
+"""Main Hebrew RTL Tkinter desktop application with modern Fintech/SaaS design (Shahrai 14, 16, 18)."""
 
 from calendar import monthrange
 from datetime import date
@@ -36,7 +36,18 @@ from .ui_settings import (
     render_settings_home,
     render_users_page,
 )
-from .ui_widgets import AttachmentsDialog, Dialog, IncomeExpenseChart, MetricCard, sort_key
+from .ui_widgets import (
+    ActionButton,
+    AttachmentsDialog,
+    BrandLogo,
+    CardFrame,
+    Dialog,
+    IncomeExpenseChart,
+    MetricCard,
+    PillBadge,
+    enable_hidpi,
+    sort_key,
+)
 
 logger = logging.getLogger("vaad.ui")
 
@@ -81,7 +92,6 @@ def _cell_to_excel(value):
 
 
 class App(tk.Tk):
-    # Hierarchical 3-section navigation: (section_title, [(page_index, icon, label), ...])
     NAV_GROUPS = (
         ("סקירה וגבייה", (
             (0, "🏠", "לוח בקרה"),
@@ -110,6 +120,17 @@ class App(tk.Tk):
         "הגדרות וניהול",
     )
 
+    PAGE_SUBTITLES = (
+        "תמונת מצב עדכנית · שחראי 14, 16 ו-18",
+        "מעקב חודשי מרוכז לכל 21 היחידות",
+        "גבייה שוטפת, חובות פתוחים וייבוא דפי בנק",
+        "ניהול יחידות מגורים וכרטסות אישיות",
+        "ניהול קופה משותפת עם הפרדת בנק ומזומן",
+        "ניהול ספקים, היסטוריית תשלומים וחשבוניות",
+        "הפקת דוחות מקצועיים ל-Excel, PDF והדפסה",
+        "הגדרות מערכת, הרשאות, יומן פעולות וגיבויים",
+    )
+
     def __init__(self, store):
         super().__init__()
         self.store = store
@@ -121,8 +142,8 @@ class App(tk.Tk):
         self.mode = None
 
         self.title(APP_TITLE)
-        self.geometry("1340x820")
-        self.minsize(1020, 680)
+        self.geometry("1360x840")
+        self.minsize(1040, 680)
         self.configure(bg=COLORS["background"])
         self._apply_icon()
         self._configure_styles()
@@ -150,18 +171,27 @@ class App(tk.Tk):
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure("TFrame", background=COLORS["background"])
-        style.configure("Card.TFrame", background=COLORS["surface"])
         style.configure("TLabel", background=COLORS["background"], foreground=COLORS["text"], padding=2)
         style.configure(
-            "TButton",
-            padding=(11, 6),
+            "TEntry",
+            fieldbackground=COLORS["surface"],
+            foreground=COLORS["text"],
+            bordercolor=COLORS["border_strong"],
+            lightcolor=COLORS["border"],
+            darkcolor=COLORS["border_strong"],
+            padding=(8, 5),
+        )
+        style.map("TEntry", bordercolor=[("focus", COLORS["action"])])
+        style.configure(
+            "TCombobox",
+            fieldbackground=COLORS["surface"],
             background=COLORS["surface"],
             foreground=COLORS["text"],
-            bordercolor=COLORS["border"],
+            bordercolor=COLORS["border_strong"],
+            arrowcolor=COLORS["muted"],
+            padding=(8, 5),
         )
-        style.map("TButton", background=[("active", COLORS["surface_alt"])])
-        style.configure("Primary.TButton", background=COLORS["action"], foreground="#FFFFFF", bordercolor=COLORS["action"])
-        style.map("Primary.TButton", background=[("active", COLORS["action_hover"])])
+        style.map("TCombobox", fieldbackground=[("readonly", COLORS["surface"])], bordercolor=[("focus", COLORS["action"])])
         style.configure(
             "Treeview",
             rowheight=ROW_HEIGHT,
@@ -169,15 +199,40 @@ class App(tk.Tk):
             fieldbackground=COLORS["surface"],
             foreground=COLORS["text"],
             borderwidth=0,
+            relief="flat",
         )
+        style.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
         style.configure(
             "Treeview.Heading",
-            background="#E2E8F0",
-            foreground=COLORS["text"],
-            padding=(6, 8),
+            background=COLORS["surface_alt"],
+            foreground=COLORS["muted"],
+            bordercolor=COLORS["border"],
+            relief="flat",
+            padding=(8, 10),
             font=(FONT, 9, "bold"),
         )
-        style.map("Treeview", background=[("selected", "#1E3A8A")], foreground=[("selected", "#FFFFFF")])
+        style.map("Treeview.Heading", background=[("active", COLORS["surface_hover"])])
+        style.map(
+            "Treeview",
+            background=[("selected", COLORS["select_bg"])],
+            foreground=[("selected", COLORS["select_fg"])],
+        )
+        style.configure(
+            "Vertical.TScrollbar",
+            background=COLORS["border"],
+            troughcolor=COLORS["surface_alt"],
+            bordercolor=COLORS["surface_alt"],
+            arrowcolor=COLORS["muted"],
+            relief="flat",
+        )
+        style.configure(
+            "Horizontal.TScrollbar",
+            background=COLORS["border"],
+            troughcolor=COLORS["surface_alt"],
+            bordercolor=COLORS["surface_alt"],
+            arrowcolor=COLORS["muted"],
+            relief="flat",
+        )
 
     def _touch_activity(self, _event=None):
         self.last_activity = time.monotonic()
@@ -232,7 +287,7 @@ class App(tk.Tk):
             child.destroy()
 
     # ------------------------------------------------------------------
-    # Login & Setup (Pre-filled for Shahrai 14, 16, 18 + Bank/Cash split)
+    # Executive Login Screen & Setup Wizard
     # ------------------------------------------------------------------
 
     def lock(self, notice=""):
@@ -240,33 +295,46 @@ class App(tk.Tk):
         self.user = None
         self.reset()
 
-        outer = tk.Frame(self, bg=COLORS["surface"], highlightbackground=COLORS["border"], highlightthickness=1, padx=44, pady=36)
-        outer.place(relx=0.5, rely=0.45, anchor="center")
+        # Sleek midnight top hero backdrop
+        hero_bg = tk.Frame(self, bg=COLORS["nav"], height=260)
+        hero_bg.pack(fill="x", side="top")
+        hero_bg.pack_propagate(False)
+        tk.Frame(hero_bg, bg=COLORS["action"], height=4).pack(fill="x", side="bottom")
 
-        tk.Label(outer, text="ניהול ועד הבית", bg=COLORS["surface"], fg=COLORS["nav"], font=(FONT, 26, "bold")).pack()
+        # Elevated centered login card overlapping the hero band
+        card = CardFrame(self, padx=40, pady=34)
+        card.place(relx=0.5, rely=0.47, anchor="center", width=440)
+        outer = card.inner
+
+        BrandLogo(outer, size=58, bg=COLORS["surface"]).pack(pady=(0, 12))
+        tk.Label(outer, text="ניהול ועד הבית", bg=COLORS["surface"], fg=COLORS["text"], font=(FONT, 22, "bold")).pack()
         tk.Label(
             outer,
             text=self.store.get("complex", "שחראי 14 · 16 · 18"),
             bg=COLORS["surface"],
             fg=COLORS["muted"],
-            font=(FONT, 12),
-        ).pack(pady=(2, 18))
+            font=(FONT, 11),
+        ).pack(pady=(2, 20))
 
         if notice:
-            tk.Label(outer, text=notice, bg=COLORS["warning_bg"], fg=COLORS["warning"], padx=10, pady=6).pack(fill="x", pady=(0, 12))
+            tk.Label(
+                outer, text=notice, bg=COLORS["warning_bg"], fg=COLORS["warning_dark"],
+                highlightbackground=COLORS["warning_border"], highlightthickness=1,
+                padx=12, pady=7, font=(FONT, 9, "bold"),
+            ).pack(fill="x", pady=(0, 14))
 
         if self.store.get("start"):
             users = self.store.list_users(active_only=True)
             user_map = {f"{u['display_name']} ({u['username']})": u["username"] for u in users}
             user_var = tk.StringVar(value=next(iter(user_map), "admin"))
             if len(users) > 1:
-                tk.Label(outer, text="משתמש", bg=COLORS["surface"], fg=COLORS["muted"], anchor="e").pack(fill="x")
-                ttk.Combobox(outer, textvariable=user_var, values=tuple(user_map.keys()), state="readonly", justify="right", width=28).pack(pady=(2, 8))
+                tk.Label(outer, text="משתמש", bg=COLORS["surface"], fg=COLORS["text_secondary"], font=(FONT, 9, "bold"), anchor="e").pack(fill="x")
+                ttk.Combobox(outer, textvariable=user_var, values=tuple(user_map.keys()), state="readonly", justify="right").pack(fill="x", pady=(3, 10))
 
-            tk.Label(outer, text="סיסמה", bg=COLORS["surface"], fg=COLORS["muted"], anchor="e").pack(fill="x")
+            tk.Label(outer, text="סיסמה", bg=COLORS["surface"], fg=COLORS["text_secondary"], font=(FONT, 9, "bold"), anchor="e").pack(fill="x")
             pwd_var = tk.StringVar()
-            field = ttk.Entry(outer, textvariable=pwd_var, show="●", justify="right", width=30)
-            field.pack(pady=(2, 14))
+            field = ttk.Entry(outer, textvariable=pwd_var, show="●", justify="right")
+            field.pack(fill="x", pady=(3, 18))
 
             def login():
                 uname = user_map.get(user_var.get(), "admin")
@@ -278,14 +346,19 @@ class App(tk.Tk):
                 self._touch_activity()
                 self.enter()
 
-            ttk.Button(outer, text="כניסה למערכת", style="Primary.TButton", command=login).pack(fill="x", ipady=3)
+            ActionButton(outer, "כניסה למערכת", login, variant="primary", pady=9, font_size=10).pack(fill="x")
             field.bind("<Return>", lambda _: login())
             field.focus_set()
         else:
-            ttk.Button(outer, text="הגדרת מערכת חדשה (שחראי 14, 16, 18)", style="Primary.TButton", command=self.setup).pack(fill="x", ipady=4)
-            ttk.Button(outer, text="שחזור מגיבוי ממחשב קודם", command=self.restore).pack(fill="x", pady=(10, 0), ipady=2)
+            ActionButton(outer, "הגדרת מערכת חדשה (שחראי 14, 16, 18)", self.setup, variant="primary", pady=10, font_size=10).pack(fill="x")
+            ActionButton(outer, "שחזור מגיבוי ממחשב קודם", self.restore, variant="soft", pady=8, font_size=9).pack(fill="x", pady=(10, 0))
 
-        tk.Label(outer, text=f"גרסה {__version__} · עבודה מקומית (OFFLINE)", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 8)).pack(pady=(18, 0))
+        tk.Frame(outer, bg=COLORS["border"], height=1).pack(fill="x", pady=(22, 12))
+        tk.Label(
+            outer,
+            text=f"גרסה {__version__}  •  עבודה מקומית ומאובטחת (OFFLINE)",
+            bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 8),
+        ).pack()
 
     def setup(self):
         defaults = str(self.store.path.parent / "backups")
@@ -314,97 +387,157 @@ class App(tk.Tk):
             self.user = dict(users[0]) if users else {"id": None, "username": "admin", "display_name": "מנהל ראשי", "role": "admin"}
             if v["load_excel"].startswith("כן"):
                 self.ledger.load_shahrai_excel_data(target_bank=bank_ag, target_cash=cash_ag, actor=self.user)
+            else:
+                self.store.save(excel_seeded="skip")
             self.after_idle(self.enter)
 
         Dialog(self, "הגדרת מערכת · שחראי 14, 16, 18", fields, save)
 
     # ------------------------------------------------------------------
-    # Hierarchical Sidebar & Main Shell
+    # Midnight Sidebar + White Topbar Shell
     # ------------------------------------------------------------------
 
     def enter(self):
+        if self.store.get("excel_seeded") == "":
+            bals = self.ledger.balances()
+            self.ledger.load_shahrai_excel_data(target_bank=bals["bank"], target_cash=bals["cash"], actor=self.user)
         self.ledger.generate()
         self.logged = True
         self._touch_activity()
         self.reset()
 
-        sidebar = tk.Frame(self, bg=COLORS["nav"], width=224)
+        # Midnight Slate Sidebar (RTL right side)
+        sidebar = tk.Frame(self, bg=COLORS["nav"], width=236)
         sidebar.pack(side="right", fill="y")
         sidebar.pack_propagate(False)
 
-        tk.Label(sidebar, text="ועד הבית", bg=COLORS["nav"], fg="white", font=(FONT, 19, "bold"), anchor="e").pack(fill="x", padx=18, pady=(20, 2))
-        tk.Label(sidebar, text=self.store.get("complex"), bg=COLORS["nav"], fg="#CBD5E1", anchor="e", wraplength=186, justify="right").pack(fill="x", padx=18, pady=(0, 8))
+        # Brand block with vector emblem
+        brand = tk.Frame(sidebar, bg=COLORS["nav"], padx=16, pady=18)
+        brand.pack(fill="x")
+        BrandLogo(brand, size=38, bg=COLORS["nav"]).pack(side="right")
+        brand_txt = tk.Frame(brand, bg=COLORS["nav"])
+        brand_txt.pack(side="right", padx=(0, 10))
+        tk.Label(brand_txt, text="ועד הבית", bg=COLORS["nav"], fg="#FFFFFF", font=(FONT, 15, "bold"), anchor="e").pack(fill="x")
+        tk.Label(brand_txt, text=self.store.get("complex"), bg=COLORS["nav"], fg=COLORS["nav_muted"], font=(FONT, 8), anchor="e").pack(fill="x")
 
-        role_badge = tk.Label(
-            sidebar,
-            text=f"{self.user['display_name']} · {ROLES.get(self.user['role'], '')}",
-            bg="#1E293B",
-            fg="#93C5FD",
-            font=(FONT, 8, "bold"),
-            anchor="e",
-            padx=10,
-            pady=4,
-        )
-        role_badge.pack(fill="x", padx=14, pady=(0, 10))
+        # Sleek user profile pill card
+        prof = tk.Frame(sidebar, bg=COLORS["nav_surface"], highlightbackground="#1E293B", highlightthickness=1, padx=10, pady=8)
+        prof.pack(fill="x", padx=14, pady=(0, 10))
+        initial_ch = (self.user["display_name"] or self.user["username"] or "A")[0]
+        avatar = tk.Label(prof, text=initial_ch, bg=COLORS["action"], fg="#FFFFFF", font=(FONT, 10, "bold"), width=3, pady=3)
+        avatar.pack(side="right")
+        ptxt = tk.Frame(prof, bg=COLORS["nav_surface"])
+        ptxt.pack(side="right", padx=(0, 9), fill="x", expand=True)
+        tk.Label(ptxt, text=self.user["display_name"], bg=COLORS["nav_surface"], fg="#F8FAFC", font=(FONT, 9, "bold"), anchor="e").pack(fill="x")
+        tk.Label(ptxt, text=ROLES.get(self.user["role"], ""), bg=COLORS["nav_surface"], fg=COLORS["nav_indicator"], font=(FONT, 8), anchor="e").pack(fill="x")
 
         self.sidebar = sidebar
         self.nav = {}
 
         for grp_title, items in self.NAV_GROUPS:
             tk.Label(
-                sidebar, text=grp_title, bg=COLORS["nav"], fg="#64748B",
-                font=(FONT, 8, "bold"), anchor="e", padx=16,
-            ).pack(fill="x", pady=(10, 2))
+                sidebar, text=grp_title, bg=COLORS["nav"], fg=COLORS["nav_section"],
+                font=(FONT, 8, "bold"), anchor="e", padx=18,
+            ).pack(fill="x", pady=(12, 3))
             for idx, icon, name in items:
+                row = tk.Frame(sidebar, bg=COLORS["nav"])
+                row.pack(fill="x", padx=10, pady=1)
+                ind = tk.Frame(row, bg=COLORS["nav"], width=4)
+                ind.pack(side="right", fill="y")
                 btn = tk.Button(
-                    sidebar, text=f"{name}  {icon}", anchor="e", padx=14, pady=8, relief="flat", borderwidth=0,
-                    bg=COLORS["nav"], fg="#F1F5F9", activebackground=COLORS["nav_hover"], activeforeground="white",
-                    font=(FONT, 10, "bold"), cursor="hand2", command=lambda i=idx: self.show(i),
+                    row, text=f"{name}   {icon}", anchor="e", padx=12, pady=9, relief="flat", borderwidth=0,
+                    bg=COLORS["nav"], fg="#E2E8F0", activebackground=COLORS["nav_hover"], activeforeground="#FFFFFF",
+                    font=(FONT, 10), cursor="hand2", command=lambda i=idx: self.show(i),
                 )
-                btn.pack(fill="x", padx=10, pady=1)
-                self.nav[idx] = btn
+                btn.pack(side="right", fill="x", expand=True)
+                btn.bind("<Enter>", lambda _e, i=idx, b=btn: b.configure(bg=COLORS["nav_hover"]) if self.page != i else None)
+                btn.bind("<Leave>", lambda _e, i=idx, b=btn: b.configure(bg=COLORS["nav"]) if self.page != i else None)
+                self.nav[idx] = (btn, ind)
 
-        tk.Button(
-            sidebar, text="נעילת המערכת  🔒", anchor="e", padx=15, pady=9, relief="flat",
-            bg=COLORS["nav"], fg="#FCA5A5", activebackground="#1E293B", activeforeground="#FECACA",
-            command=self.lock, cursor="hand2",
-        ).pack(side="bottom", fill="x", pady=(4, 12))
+        # Bottom lock button
+        tk.Frame(sidebar, bg="#1E293B", height=1).pack(side="bottom", fill="x", padx=14, pady=(0, 8))
+        lock_btn = tk.Button(
+            sidebar, text="נעילת המערכת   🔒", anchor="e", padx=16, pady=9, relief="flat",
+            bg=COLORS["nav"], fg="#FDA4AF", activebackground=COLORS["nav_hover"], activeforeground="#FFE4E6",
+            font=(FONT, 9, "bold"), command=self.lock, cursor="hand2",
+        )
+        lock_btn.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
 
-        self.main = ttk.Frame(self, padding=(22, 14))
-        self.main.pack(side="right", fill="both", expand=True)
+        # Content shell (Topbar + Main Canvas)
+        content = tk.Frame(self, bg=COLORS["background"])
+        content.pack(side="right", fill="both", expand=True)
+
+        self.topbar = tk.Frame(content, bg=COLORS["topbar"], height=64)
+        self.topbar.pack(fill="x", side="top")
+        self.topbar.pack_propagate(False)
+        tk.Frame(content, bg=COLORS["border"], height=1).pack(fill="x", side="top")
+
+        self.main = tk.Frame(content, bg=COLORS["background"], padx=22, pady=14)
+        self.main.pack(fill="both", expand=True)
+
+        # Clean status footer bar
+        status_bar = tk.Frame(content, bg=COLORS["surface"], highlightbackground=COLORS["border"], highlightthickness=1, padx=22, pady=4)
+        status_bar.pack(fill="x", side="bottom")
+        tk.Label(status_bar, textvariable=self.status, bg=COLORS["surface"], fg=COLORS["success"], font=(FONT, 9, "bold"), anchor="e").pack(side="right")
+        tk.Label(status_bar, text=f"שחראי 14 · 16 · 18   |   {date_text(today())}", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 8)).pack(side="left")
+
         self.show(0)
+
+    def _render_topbar(self, index):
+        for child in self.topbar.winfo_children():
+            child.destroy()
+
+        right = tk.Frame(self.topbar, bg=COLORS["topbar"], padx=22)
+        right.pack(side="right", fill="y")
+        tk.Label(right, text=self.PAGES[index], bg=COLORS["topbar"], fg=COLORS["text"], font=(FONT, 16, "bold"), anchor="e").pack(anchor="e", pady=(10, 0))
+        tk.Label(right, text=self.PAGE_SUBTITLES[index], bg=COLORS["topbar"], fg=COLORS["muted"], font=(FONT, 8), anchor="e").pack(anchor="e")
+
+        # Clickable live balance pill badges on the left!
+        bals = self.ledger.balances()
+        left = tk.Frame(self.topbar, bg=COLORS["topbar"], padx=18)
+        left.pack(side="left", fill="y")
+        pills_row = tk.Frame(left, bg=COLORS["topbar"])
+        pills_row.pack(expand=True)
+
+        PillBadge(
+            pills_row, "סה״כ בקופה", amount(bals["total"]),
+            bg=COLORS["nav"], fg="#FFFFFF", border=COLORS["nav"],
+            command=lambda: self.show(4),
+        ).pack(side="left", padx=4)
+        PillBadge(
+            pills_row, "🏦 בנק", amount(bals["bank"]),
+            bg=COLORS["action_soft"], fg=COLORS["action"], border=COLORS["action_border"],
+            command=lambda: self.show(4, "bank"),
+        ).pack(side="left", padx=4)
+        PillBadge(
+            pills_row, "💵 מזומן", amount(bals["cash"]),
+            bg=COLORS["success_bg"], fg=COLORS["success_dark"], border=COLORS["success_border"],
+            command=lambda: self.show(4, "cash"),
+        ).pack(side="left", padx=4)
 
     def show(self, index, mode=None):
         self.page, self.mode = index, mode
-        for i, button in self.nav.items():
-            button.configure(bg=COLORS["nav_active"] if i == index else COLORS["nav"])
+        for i, (btn, ind) in self.nav.items():
+            if i == index:
+                btn.configure(bg=COLORS["nav_surface"], fg="#FFFFFF", font=(FONT, 10, "bold"))
+                ind.configure(bg=COLORS["nav_indicator"])
+            else:
+                btn.configure(bg=COLORS["nav"], fg="#CBD5E1", font=(FONT, 10, "normal"))
+                ind.configure(bg=COLORS["nav"])
+
+        self._render_topbar(index)
         for child in self.main.winfo_children():
             child.destroy()
 
-        header = ttk.Frame(self.main)
-        header.pack(fill="x", pady=(0, 10))
-        ttk.Label(header, text=self.PAGES[index], font=(FONT, 19, "bold"), anchor="e").pack(side="right")
-
-        # Persistent live mini-balances pill on the left of every page header
-        bals = self.ledger.balances()
-        ttk.Label(
-            header,
-            text=f"בנק: {amount(bals['bank'])}   |   מזומן: {amount(bals['cash'])}   |   סה״כ קופה: {amount(bals['total'])}",
-            foreground=COLORS["info"],
-            font=(FONT, 9, "bold"),
-        ).pack(side="left", pady=6)
-
-        ttk.Label(self.main, textvariable=self.status, anchor="e", foreground=COLORS["success"], font=(FONT, 9, "bold")).pack(side="bottom", fill="x", pady=(4, 0))
-
         pages = (
-            self.dashboard,            # 0
+            self.dashboard,                      # 0
             lambda: render_annual_matrix(self),  # 1
-            self.collection,           # 2
-            self.units,                # 3
-            self.movements,            # 4
-            self.suppliers,            # 5
-            self.reports,              # 6
-            self.settings,             # 7
+            self.collection,                     # 2
+            self.units,                          # 3
+            self.movements,                      # 4
+            self.suppliers,                      # 5
+            self.reports,                        # 6
+            self.settings,                       # 7
         )
         pages[index]()
 
@@ -413,23 +546,28 @@ class App(tk.Tk):
         self.show(self.page, self.mode)
 
     # ------------------------------------------------------------------
-    # Shared UI Primitives
+    # Shared Modern UI Primitives
     # ------------------------------------------------------------------
 
-    def bar(self, parent=None):
-        bar = ttk.Frame(parent or self.main)
+    def bar(self, parent=None, card=False):
+        if card:
+            c = CardFrame(parent or self.main, padx=12, pady=8)
+            c.pack(fill="x", pady=(0, 8))
+            return c.inner
+        bar = tk.Frame(parent or self.main, bg=COLORS["background"])
         bar.pack(fill="x", pady=(2, 8))
         return bar
 
-    def button(self, bar, text, command, primary=False, perm=None):
-        btn = ttk.Button(bar, text=text, command=command, style="Primary.TButton" if primary else "TButton")
-        if perm and not self.can(perm):
-            btn.state(["disabled"])
+    def button(self, bar, text, command, primary=False, perm=None, variant=None):
+        disabled = bool(perm and not self.can(perm))
+        v = variant or ("primary" if primary else "secondary")
+        btn = ActionButton(bar, text, command, variant=v, disabled=disabled)
         btn.pack(side="right", padx=(5, 0))
         return btn
 
     def input(self, bar, label, value="", options=None, width=14):
-        ttk.Label(bar, text=label).pack(side="right", padx=(4, 8))
+        bg = bar.cget("bg") if isinstance(bar, tk.Frame) else COLORS["background"]
+        tk.Label(bar, text=label, bg=bg, fg=COLORS["text_secondary"], font=(FONT, 9, "bold")).pack(side="right", padx=(6, 6))
         var = tk.StringVar(value=value)
         if options:
             field = ttk.Combobox(bar, textvariable=var, values=options, state="readonly", justify="right", width=width)
@@ -438,23 +576,34 @@ class App(tk.Tk):
         field.pack(side="right")
         return var
 
-    def table(self, headers, rows=(), height=12, parent=None):
+    def table(self, headers, rows=(), height=12, parent=None, title=None):
         parent = parent or self.main
-        box = ttk.Frame(parent)
-        box.pack(fill="both", expand=True, pady=(0, 6))
-        tree = ttk.Treeview(box, columns=list(range(len(headers))), show="headings", height=height)
-        scroll = ttk.Scrollbar(box, orient="vertical", command=tree.yview)
-        horiz = ttk.Scrollbar(box, orient="horizontal", command=tree.xview)
+        card = CardFrame(parent, padx=0, pady=0)
+        card.pack(fill="both", expand=True, pady=(0, 6))
+        box = card.inner
+
+        if title:
+            th = tk.Frame(box, bg=COLORS["surface"], padx=14, pady=9)
+            th.pack(fill="x")
+            tk.Label(th, text=title, bg=COLORS["surface"], fg=COLORS["text"], font=(FONT, 10, "bold"), anchor="e").pack(side="right")
+            tk.Frame(box, bg=COLORS["border"], height=1).pack(fill="x")
+
+        body = tk.Frame(box, bg=COLORS["surface"])
+        body.pack(fill="both", expand=True)
+
+        tree = ttk.Treeview(body, columns=list(range(len(headers))), show="headings", height=height)
+        scroll = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
+        horiz = ttk.Scrollbar(body, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=scroll.set, xscrollcommand=horiz.set)
         horiz.pack(side="bottom", fill="x")
         scroll.pack(side="left", fill="y")
         tree.pack(side="right", fill="both", expand=True)
 
         tree.tag_configure("alternate", background=COLORS["surface_alt"])
-        tree.tag_configure("paid", background=COLORS["success_bg"], foreground=COLORS["success"])
-        tree.tag_configure("partial", background=COLORS["warning_bg"], foreground=COLORS["warning"])
-        tree.tag_configure("debt", background=COLORS["danger_bg"], foreground=COLORS["danger"])
-        tree.tag_configure("credit", background=COLORS["info_bg"], foreground=COLORS["info"])
+        tree.tag_configure("paid", background=COLORS["success_bg"], foreground=COLORS["success_dark"])
+        tree.tag_configure("partial", background=COLORS["warning_bg"], foreground=COLORS["warning_dark"])
+        tree.tag_configure("debt", background=COLORS["danger_bg"], foreground=COLORS["danger_dark"])
+        tree.tag_configure("credit", background=COLORS["info_bg"], foreground=COLORS["info_dark"])
         tree.tag_configure("reversed", foreground=COLORS["reversed_fg"])
 
         for index, label in enumerate(reversed(headers)):
@@ -492,16 +641,13 @@ class App(tk.Tk):
         return int(selected[0])
 
     # ------------------------------------------------------------------
-    # Shared Export Helpers (Excel / PDF / Print / CSV / Receipts)
+    # Export & Receipt Helpers
     # ------------------------------------------------------------------
 
     def export_xlsx_report(self, title, headers, rows, totals=None):
         path = filedialog.asksaveasfilename(
-            parent=self,
-            title="שמירת דוח Excel",
-            initialfile=f"{title}-{today()}.xlsx",
-            defaultextension=".xlsx",
-            filetypes=[("Excel", "*.xlsx")],
+            parent=self, title="שמירת דוח Excel", initialfile=f"{title}-{today()}.xlsx",
+            defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")],
         )
         if not path:
             return
@@ -512,11 +658,8 @@ class App(tk.Tk):
 
     def export_pdf_report(self, title, headers, rows, subtitle="", kpis=None, totals=None, chart_svg=""):
         path = filedialog.asksaveasfilename(
-            parent=self,
-            title="שמירת דוח PDF",
-            initialfile=f"{title}-{today()}.pdf",
-            defaultextension=".pdf",
-            filetypes=[("PDF", "*.pdf")],
+            parent=self, title="שמירת דוח PDF", initialfile=f"{title}-{today()}.pdf",
+            defaultextension=".pdf", filetypes=[("PDF", "*.pdf")],
         )
         if not path:
             return
@@ -542,11 +685,8 @@ class App(tk.Tk):
         html_doc = build_receipt_html(data)
         if as_pdf:
             path = filedialog.asksaveasfilename(
-                parent=self,
-                title="שמירת אישור תשלום (PDF)",
-                initialfile=f"receipt-{data['receipt_no']}.pdf",
-                defaultextension=".pdf",
-                filetypes=[("PDF", "*.pdf")],
+                parent=self, title="שמירת אישור תשלום (PDF)", initialfile=f"receipt-{data['receipt_no']}.pdf",
+                defaultextension=".pdf", filetypes=[("PDF", "*.pdf")],
             )
             if not path:
                 return
@@ -558,7 +698,7 @@ class App(tk.Tk):
             self.status.set(f"נפתח אישור תשלום {data['receipt_no']} להדפסה")
 
     # ------------------------------------------------------------------
-    # Transaction Forms (Payment, Expense/Income, Bank↔Cash Transfer, Reversal)
+    # Transaction Forms
     # ------------------------------------------------------------------
 
     def payment(self, unit_id=None):
@@ -582,7 +722,7 @@ class App(tk.Tk):
 
         def footer(dialog, bar):
             result = tk.StringVar()
-            ttk.Label(bar, textvariable=result, anchor="e", justify="right", foreground=COLORS["info"]).pack(side="bottom", fill="x", pady=8)
+            tk.Label(bar, textvariable=result, bg=COLORS["surface_alt"], fg=COLORS["info_dark"], font=(FONT, 9, "bold"), anchor="e", justify="right").pack(side="bottom", fill="x", pady=(0, 8))
 
             def preview(*_):
                 v = dialog.get()
@@ -700,23 +840,16 @@ class App(tk.Tk):
         ]
 
         def save(v):
-            if v["direction"] == directions[0]:
-                from_a, to_a = "cash", "bank"
-            else:
-                from_a, to_a = "bank", "cash"
+            from_a, to_a = ("cash", "bank") if v["direction"] == directions[0] else ("bank", "cash")
             self.ledger.transfer_cash(from_a, to_a, money(v["amount"]), iso(v["day"]), v["reference"], v["notes"], actor=self.user)
             self.refresh("ההעברה הפנימית בין הבנק למזומן נשמרה")
 
         Dialog(
-            self,
-            "העברה פנימית בין בנק למזומן",
-            fields,
-            save,
-            footer=lambda _, bar: ttk.Label(
+            self, "העברה פנימית בין בנק למזומן", fields, save,
+            footer=lambda _, bar: tk.Label(
                 bar,
-                text=f"יתרה נוכחית: בנק {amount(bals['bank'])}   |   מזומן {amount(bals['cash'])}   (היתרה הכוללת בקופה אינה משתנה)",
-                anchor="e",
-                foreground=COLORS["info"],
+                text=f"יתרה נוכחית: בנק {amount(bals['bank'])}   •   מזומן {amount(bals['cash'])}   (סה״כ הקופה אינו משתנה)",
+                bg=COLORS["surface_alt"], fg=COLORS["info_dark"], font=(FONT, 8, "bold"), anchor="e",
             ).pack(side="bottom", fill="x", pady=(0, 8)),
         )
 
@@ -732,7 +865,7 @@ class App(tk.Tk):
         Dialog(self, "ביטול פעולה", [("reason", "סיבת הביטול", "", None), ("day", "תאריך חשבונאי", date_text(today()), None)], save)
 
     # ------------------------------------------------------------------
-    # Page 0: Dashboard (Hero Bank/Cash Split + Hierarchy + Chart)
+    # Page 0: Executive Fintech Dashboard
     # ------------------------------------------------------------------
 
     def dashboard(self):
@@ -749,60 +882,70 @@ class App(tk.Tk):
         unpaid_count = sum(1 for item in details if item[4] == "לא שולם")
         rate_pct = f"{received / expected:.0%}" if expected else "—"
 
-        # Row 1: Hero Cashbox Split (Total / Bank / Cash)
-        hero = ttk.Frame(self.main)
-        hero.pack(fill="x", pady=(0, 6))
+        # Row 1: Hero Cashbox Split (Featured Dark Total + Light Bank & Cash)
+        hero = tk.Frame(self.main, bg=COLORS["background"])
+        hero.pack(fill="x", pady=(0, 8))
         for col in range(3):
             hero.columnconfigure(col, weight=1, uniform="hero")
-        hero_cards = [
-            ("סך הכול בקופה המשותפת", amount(bals["total"]), "בנק + מזומן · שחראי 14, 16, 18", COLORS["nav"], lambda: self.show(4)),
-            ("יתרה בחשבון הבנק  🏦", amount(bals["bank"]), "העברות בנקאיות, המחאות והפקדות", COLORS["action"], lambda: self.show(4, "bank")),
-            ("יתרה במזומן בקופה  💵", amount(bals["cash"]), "מזומן ביד נציג הוועד", COLORS["success"], lambda: self.show(4, "cash")),
-        ]
-        for idx, (title, val, sub, accent, cmd) in enumerate(hero_cards):
-            MetricCard(hero, title, val, sub, accent, cmd).grid(row=0, column=2 - idx, sticky="nsew", padx=4, pady=2)
+
+        MetricCard(
+            hero, "סך הכול בקופה המשותפת", amount(bals["total"]),
+            "בנק + מזומן  •  שחראי 14, 16 ו-18",
+            accent=COLORS["nav_indicator"], command=lambda: self.show(4), icon="💼", dark=True,
+        ).grid(row=0, column=2, sticky="nsew", padx=4)
+        MetricCard(
+            hero, "יתרה בחשבון הבנק", amount(bals["bank"]),
+            "העברות בנקאיות, המחאות והפקדות",
+            accent=COLORS["action"], command=lambda: self.show(4, "bank"), icon="🏦",
+        ).grid(row=0, column=1, sticky="nsew", padx=4)
+        MetricCard(
+            hero, "יתרה במזומן בקופה", amount(bals["cash"]),
+            "מזומן ביד נציג ועד הבית",
+            accent=COLORS["success"], command=lambda: self.show(4, "cash"), icon="💵",
+        ).grid(row=0, column=0, sticky="nsew", padx=4)
 
         # Row 2: Operational KPIs (4 clean cards)
-        ops = ttk.Frame(self.main)
-        ops.pack(fill="x", pady=(0, 8))
+        ops = tk.Frame(self.main, bg=COLORS["background"])
+        ops.pack(fill="x", pady=(0, 10))
         for col in range(4):
             ops.columnconfigure(col, weight=1, uniform="ops")
         ops_cards = [
-            ("גבייה החודש", f"{amount(received)} ({rate_pct})", f"מתוך {amount(expected)} צפוי · נותר {amount(expected - received)}", COLORS["info"], lambda: self.show(1)),
-            ("יחידות ששילמו החודש", f"{paid_count} / {len(details)}", f"חלקי: {partial_count} · טרם שילמו: {unpaid_count}", COLORS["success"], lambda: self.show(1)),
-            ("סך חובות דיירים", amount(sum(a["unpaid_total"] for _, a in debtors)), f"{len(debtors)} יחידות בפיגור", COLORS["danger"] if debtors else COLORS["success"], lambda: self.show(2, "debt")),
-            ("תזרים החודש", amount(report["payment"] + report["income"] + report["expense"]), f"הכנסות {amount(report['payment'] + report['income'])} · הוצאות {amount(-report['expense'])}", COLORS["warning"], lambda: self.show(4)),
+            ("גבייה החודש", f"{amount(received)} ({rate_pct})", f"מתוך {amount(expected)} · נותר {amount(expected - received)}", COLORS["info"], "📈", lambda: self.show(1)),
+            ("יחידות ששילמו", f"{paid_count} / {len(details)}", f"חלקי: {partial_count} · טרם שילמו: {unpaid_count}", COLORS["success"], "✓", lambda: self.show(1)),
+            ("חובות פתוחים", amount(sum(a["unpaid_total"] for _, a in debtors)), f"{len(debtors)} יחידות בפיגור", COLORS["danger"] if debtors else COLORS["success"], "!", lambda: self.show(2, "debt")),
+            ("תזרים החודש", amount(report["payment"] + report["income"] + report["expense"]), f"הכנסות {amount(report['payment'] + report['income'])} · הוצאות {amount(-report['expense'])}", COLORS["warning"], "⇄", lambda: self.show(4)),
         ]
-        for idx, (title, val, sub, accent, cmd) in enumerate(ops_cards):
-            MetricCard(ops, title, val, sub, accent, cmd).grid(row=0, column=3 - idx, sticky="nsew", padx=4, pady=2)
+        for idx, (title, val, sub, accent, icon, cmd) in enumerate(ops_cards):
+            MetricCard(ops, title, val, sub, accent, cmd, icon=icon).grid(row=0, column=3 - idx, sticky="nsew", padx=4)
 
-        # Action bar
-        bar = self.bar()
+        # Quick Action Strip inside crisp white card
+        act_card = CardFrame(self.main, padx=12, pady=8)
+        act_card.pack(fill="x", pady=(0, 10))
+        bar = act_card.inner
         self.button(bar, "+ רישום תשלום", self.payment, primary=True, perm="record_payment")
-        self.button(bar, "📅 לוח גבייה שנתי", lambda: self.show(1), primary=True)
-        self.button(bar, "+ רישום הוצאה", lambda: self.movement_form("expense"), perm="record_expense")
-        self.button(bar, "⇄ בנק ↔ מזומן", self.transfer_dialog, perm="record_expense")
-        self.button(bar, "📥 ייבוא בנק", lambda: self.show(2, "bank"), perm="bank_import")
+        self.button(bar, "📅 לוח גבייה שנתי", lambda: self.show(1), variant="soft")
+        self.button(bar, "+ רישום הוצאה", lambda: self.movement_form("expense"), variant="soft", perm="record_expense")
+        self.button(bar, "⇄ העברה בנק ↔ מזומן", self.transfer_dialog, perm="record_expense")
+        self.button(bar, "📥 ייבוא תנועות בנק", lambda: self.show(2, "bank"), perm="bank_import")
 
         due = self.ledger.recurring_due(today())
         if due:
-            ttk.Button(bar, text=f"⚠ {len(due)} הוצאות קבועות ממתינות", command=lambda: self.show(4, "recurring")).pack(side="left")
+            ActionButton(bar, f"⚠ {len(due)} הוצאות קבועות ממתינות", lambda: self.show(4, "recurring"), variant="danger").pack(side="left")
 
-        # Interactive 12-Month Income vs Expense Chart
-        series = self.ledger.monthly_series(12)
-        chart = IncomeExpenseChart(self.main, series, height=175)
-        chart.pack(fill="x", pady=(0, 8))
+        # Interactive 12-Month Chart inside crisp white CardFrame
+        chart_card = CardFrame(self.main, padx=10, pady=8)
+        chart_card.pack(fill="x", pady=(0, 10))
+        IncomeExpenseChart(chart_card.inner, self.ledger.monthly_series(12), height=175).pack(fill="x")
 
-        # Split bottom: Recent Movements + Top Debtors
-        bottom = ttk.Frame(self.main)
+        # Bottom split: Recent Movements card (right) + Top Debtors card (left)
+        bottom = tk.Frame(self.main, bg=COLORS["background"])
         bottom.pack(fill="both", expand=True)
         bottom.columnconfigure(0, weight=2)
         bottom.columnconfigure(1, weight=3)
         bottom.rowconfigure(0, weight=1)
 
-        right_box = ttk.Frame(bottom)
-        right_box.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        ttk.Label(right_box, text="תנועות אחרונות בקופה", anchor="e", font=(FONT, 11, "bold")).pack(fill="x")
+        right_box = tk.Frame(bottom, bg=COLORS["background"])
+        right_box.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         self.table(
             ("תאריך", "קופה", "פעולה", "תיאור", "סכום"),
             [
@@ -811,16 +954,17 @@ class App(tk.Tk):
             ],
             height=5,
             parent=right_box,
+            title="תנועות אחרונות בקופה",
         )
 
-        left_box = ttk.Frame(bottom)
-        left_box.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        ttk.Label(left_box, text="דיירים בפיגור (לחיצה כפולה לכרטסת)", anchor="e", font=(FONT, 11, "bold")).pack(fill="x")
+        left_box = tk.Frame(bottom, bg=COLORS["background"])
+        left_box.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         debt_tree = self.table(
             ("בניין", "דייר", "חוב"),
             [(u["id"], (f"בניין {u['building']}", u["tenant"] or u["owner"] or unit_name(u), amount(a["unpaid_total"]))) for u, a in debtors[:6]],
             height=5,
             parent=left_box,
+            title="דיירים בפיגור (לחיצה כפולה לכרטסת)",
         )
         debt_tree.bind("<Double-1>", lambda e: self.unit_detail(int(debt_tree.identify_row(e.y))) if debt_tree.identify_row(e.y).isdigit() else None)
 
@@ -834,15 +978,15 @@ class App(tk.Tk):
 
     def debtor_table(self, parent=None):
         parent = parent or self.main
-        bar = self.bar(parent)
+        bar = self.bar(parent, card=True)
         sort = self.input(bar, "מיון", "סכום", ("סכום", "שם", "בניין", "דירה"), 10)
-        self.button(bar, "רישום תשלום", lambda: self.payment(self.selection(tree)), primary=True, perm="record_payment")
-        self.button(bar, "פתיחת כרטסת", lambda: self.unit_detail(self.selection(tree)))
+        self.button(bar, "+ רישום תשלום", lambda: self.payment(self.selection(tree)), primary=True, perm="record_payment")
+        self.button(bar, "כרטסת דייר", lambda: self.unit_detail(self.selection(tree)), variant="soft")
         self.button(bar, "ייצוא Excel", lambda: self.export_xlsx_report("דוח חובות פתוחים", headers, current_rows))
         self.button(bar, "ייצוא PDF", lambda: self.export_pdf_report("דוח חובות פתוחים", headers, current_rows))
 
         debt_sum = sum(a["unpaid_total"] for _, a in self.debt_rows())
-        ttk.Label(parent, text=f"סך החובות הפתוחים: {amount(debt_sum)}", anchor="e", font=(FONT, 11, "bold"), foreground=COLORS["danger"]).pack(fill="x", pady=(0, 4))
+        tk.Label(bar, text=f"סך חובות: {amount(debt_sum)}", bg=COLORS["surface"], fg=COLORS["danger"], font=(FONT, 10, "bold")).pack(side="left")
 
         headers = ("בניין", "דייר / יחידה", "טלפון", "חוב כולל", "חוב החודש", "חוב קודם", "וותק בימים")
         tree = self.table(headers, parent=parent)
@@ -873,11 +1017,11 @@ class App(tk.Tk):
     def collection(self):
         if self.mode == "current":
             self.period = today()[:7]
-        bar = self.bar()
-        self.button(bar, "מעקב חודשי", lambda: self.show(2), primary=self.mode in (None, "current"))
-        self.button(bar, "חובות פתוחים", lambda: self.show(2, "debt"), primary=self.mode == "debt")
-        self.button(bar, "ייבוא תנועות בנק (Excel/CSV)", lambda: self.show(2, "bank"), primary=self.mode == "bank", perm="bank_import")
-        self.button(bar, "רישום תשלום ידני", self.payment, primary=True, perm="record_payment")
+        bar = self.bar(card=True)
+        self.button(bar, "מעקב חודשי", lambda: self.show(2), variant="primary" if self.mode in (None, "current") else "secondary")
+        self.button(bar, "חובות פתוחים", lambda: self.show(2, "debt"), variant="primary" if self.mode == "debt" else "secondary")
+        self.button(bar, "📥 ייבוא תנועות בנק", lambda: self.show(2, "bank"), variant="primary" if self.mode == "bank" else "soft", perm="bank_import")
+        self.button(bar, "+ רישום תשלום ידני", self.payment, variant="success", perm="record_payment")
 
         if self.mode == "debt":
             self.debtor_table()
@@ -886,17 +1030,17 @@ class App(tk.Tk):
             render_bank_import(self, self.main)
             return
 
-        filters = self.bar()
+        filters = self.bar(card=True)
         month = self.input(filters, "חודש", self.period[5:], tuple(f"{m:02d}" for m in range(1, 13)), 5)
         year = self.input(filters, "שנה", self.period[:4], width=7)
-        self.button(filters, "הצגה", lambda: load())
-        self.button(filters, "תשלום ליחידה", lambda: self.payment(self.selection(tree)), perm="record_payment")
-        self.button(filters, "תיקון או פטור", lambda: adjust(), perm="adjust")
-        self.button(filters, "ייצוא Excel", lambda: self.export_xlsx_report(f"גבייה {self.period}", headers, current_rows))
-        self.button(filters, "ייצוא PDF", lambda: self.export_pdf_report(f"דוח גבייה חודשי · {self.period}", headers, current_rows))
+        self.button(filters, "הצגה", lambda: load(), variant="soft")
+        self.button(filters, "תשלום ליחידה", lambda: self.payment(self.selection(tree)), primary=True, perm="record_payment")
+        self.button(filters, "תיקון / פטור", lambda: adjust(), perm="adjust")
+        self.button(filters, "Excel", lambda: self.export_xlsx_report(f"גבייה {self.period}", headers, current_rows))
+        self.button(filters, "PDF", lambda: self.export_pdf_report(f"דוח גבייה חודשי · {self.period}", headers, current_rows))
 
         summary_var = tk.StringVar()
-        ttk.Label(self.main, textvariable=summary_var, anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(0, 4))
+        tk.Label(self.main, textvariable=summary_var, bg=COLORS["background"], fg=COLORS["text_secondary"], anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(0, 6))
 
         headers = ("בניין", "דייר / דירה", "חיוב", "שולם", "נותר", "חוב קודם", "זכות", "מצב")
         tree = self.table(headers)
@@ -923,7 +1067,7 @@ class App(tk.Tk):
             exp = sum(c["due"] for _, c, *_ in details)
             rec = sum(c["paid"] for _, c, *_ in details)
             pct = f"{rec / exp:.0%}" if exp else "—"
-            summary_var.set(f"צפי גבייה: {amount(exp)}   ·   נגבה: {amount(rec)} ({pct})   ·   נותר לגבות: {amount(exp - rec)}")
+            summary_var.set(f"צפי גבייה: {amount(exp)}   •   נגבה: {amount(rec)} ({pct})   •   נותר לגבות: {amount(exp - rec)}")
 
         def adjust():
             self.require("adjust")
@@ -947,7 +1091,7 @@ class App(tk.Tk):
         if isinstance(self.mode, tuple) and self.mode[0] == "unit":
             self.unit_sheet(self.mode[1])
             return
-        bar = self.bar()
+        bar = self.bar(card=True)
         query = self.input(bar, "חיפוש", width=22)
         building = self.input(bar, "בניין", "הכול", ("הכול", "14", "16", "18"), 8)
         states = ("הכול", "חוב", "זכות", "מאוזן", "פעילה", "לא פעילה")
@@ -955,8 +1099,8 @@ class App(tk.Tk):
 
         actions = self.bar()
         self.button(actions, "פתיחת כרטסת אישית", lambda: self.unit_detail(self.selection(tree)), primary=True)
-        self.button(actions, "רישום תשלום", lambda: self.payment(self.selection(tree)), perm="record_payment")
-        self.button(actions, "הוספת יחידה", self.add_unit_dialog, perm="manage_units")
+        self.button(actions, "+ רישום תשלום", lambda: self.payment(self.selection(tree)), variant="soft", perm="record_payment")
+        self.button(actions, "+ הוספת יחידה", self.add_unit_dialog, perm="manage_units")
         self.button(actions, "ייצוא Excel", self.export_data)
 
         tree = self.table(("בניין", "דירה", "יחידה", "בעלים", "שוכר", "טלפון", "תעריף", "חוב / יתרה", "מצב"))
@@ -1021,20 +1165,32 @@ class App(tk.Tk):
         bal = account["balance"]
         bal_color = COLORS["danger"] if account["unpaid_total"] > 0 else (COLORS["info"] if bal < 0 else COLORS["success"])
 
-        ttk.Label(
-            self.main,
-            text=f"בניין {row['building']} · {row['tenant'] or row['owner'] or unit_name(row)}   ·   חוב פתוח: {amount(account['unpaid_total'])}   ·   יתרה כוללת: {amount(bal)}",
-            anchor="e", font=(FONT, 15, "bold"), foreground=bal_color,
-        ).pack(fill="x", pady=(0, 2))
-        ttk.Label(
-            self.main,
-            text=f"בעלים: {row['owner'] or '—'}   ·   שוכר: {row['tenant'] or '—'}   ·   טלפון: {row['phone'] or '—'}   ·   דוא״ל: {row['email'] or '—'}   ·   תעריף: {amount(row['rate'] or 0)}",
-            anchor="e", foreground=COLORS["muted"],
+        # Sleek resident header card
+        hcard = CardFrame(self.main, padx=16, pady=12)
+        hcard.pack(fill="x", pady=(0, 8))
+        hb = hcard.inner
+        tk.Label(
+            hb,
+            text=f"בניין {row['building']}  •  {row['tenant'] or row['owner'] or unit_name(row)}",
+            bg=COLORS["surface"], fg=COLORS["text"], font=(FONT, 15, "bold"), anchor="e",
+        ).pack(side="right")
+        tk.Label(
+            hb,
+            text=f"חוב פתוח: {amount(account['unpaid_total'])}   |   יתרה כוללת: {amount(bal)}",
+            bg=COLORS["surface"], fg=bal_color, font=(FONT, 12, "bold"),
+        ).pack(side="left")
+
+        sub_row = tk.Frame(self.main, bg=COLORS["background"])
+        sub_row.pack(fill="x", pady=(0, 6))
+        tk.Label(
+            sub_row,
+            text=f"בעלים: {row['owner'] or '—'}   •   שוכר: {row['tenant'] or '—'}   •   טלפון: {row['phone'] or '—'}   •   דוא״ל: {row['email'] or '—'}   •   תעריף: {amount(row['rate'] or 0)}",
+            bg=COLORS["background"], fg=COLORS["muted"], anchor="e", font=(FONT, 9),
         ).pack(fill="x")
 
         bar = self.bar()
-        self.button(bar, "רישום תשלום", lambda: self.payment(unit), primary=True, perm="record_payment")
-        self.button(bar, "אישור תשלום (קבלה)", lambda: self.show_receipt(self.selection(tree)))
+        self.button(bar, "+ רישום תשלום", lambda: self.payment(unit), primary=True, perm="record_payment")
+        self.button(bar, "אישור תשלום (קבלה)", lambda: self.show_receipt(self.selection(tree)), variant="soft")
         self.button(bar, "פרטי היחידה", lambda: self.edit_unit(row), perm="manage_units")
         self.button(bar, "החלפת דייר", lambda: self.replace_resident(row), perm="manage_units")
         self.button(bar, "שינוי תעריף", lambda: self.change_rate(unit, row["rate"] or 0), perm="manage_rates")
@@ -1043,19 +1199,19 @@ class App(tk.Tk):
                 self.ledger.opening(unit, money(v["amount"]), actor=self.user)
                 self.refresh("יתרת הפתיחה נשמרה")
             self.button(bar, "יתרת פתיחה", lambda: Dialog(self, "יתרת פתיחה", [("amount", "חוב חיובי או זכות שלילית בשקלים", "0", None)], opening), perm="manage_units")
-        self.button(bar, "חזרה לרשימה", lambda: self.show(3))
+        self.button(bar, "← חזרה לרשימה", lambda: self.show(3))
 
-        filters = self.bar()
+        filters = self.bar(card=True)
         start = self.input(filters, "מתאריך", width=12)
         end = self.input(filters, "עד תאריך", width=12)
-        self.button(filters, "סינון", lambda: load())
+        self.button(filters, "סינון", lambda: load(), variant="soft")
         self.button(filters, "השנה", lambda: year())
-        self.button(filters, "ייצוא כרטסת Excel", lambda: export_card("xlsx"))
-        self.button(filters, "ייצוא כרטסת PDF", lambda: export_card("pdf"))
-        self.button(filters, "הדפסת כרטסת", lambda: export_card("print"))
+        self.button(filters, "Excel", lambda: export_card("xlsx"))
+        self.button(filters, "PDF", lambda: export_card("pdf"))
+        self.button(filters, "הדפסה", lambda: export_card("print"))
 
         headers = ("תאריך", "תיאור", "קופה", "אמצעי תשלום", "חיוב", "זיכוי", "יתרה", "הערות")
-        tree = self.table(headers, height=11)
+        tree = self.table(headers, height=10)
         current_data = []
 
         def year():
@@ -1109,7 +1265,6 @@ class App(tk.Tk):
 
         occupants = self.ledger.unit_occupants(unit)
         if occupants:
-            ttk.Label(self.main, text="היסטוריית דיירים ובעלים קודמים", anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(6, 2))
             self.table(
                 ("תפקיד", "שם", "טלפון", "דוא״ל", "מתאריך", "עד תאריך", "הערות"),
                 [
@@ -1117,6 +1272,7 @@ class App(tk.Tk):
                     for o in occupants
                 ],
                 height=3,
+                title="היסטוריית דיירים ובעלים קודמים",
             )
 
     def replace_resident(self, row):
@@ -1184,27 +1340,29 @@ class App(tk.Tk):
             self.transfers_page()
             return
 
-        # 3-card live Bank / Cash / Total banner
         bals = self.ledger.balances()
-        strip = ttk.Frame(self.main)
+        strip = tk.Frame(self.main, bg=COLORS["background"])
         strip.pack(fill="x", pady=(0, 8))
         for col in range(3):
             strip.columnconfigure(col, weight=1, uniform="mstrip")
-        MetricCard(strip, "סך הכול בקופה", amount(bals["total"]), "בנק + מזומן", COLORS["nav"]).grid(row=0, column=2, sticky="nsew", padx=4)
-        MetricCard(strip, "יתרה בבנק 🏦", amount(bals["bank"]), "תנועות בנק והפקדות", COLORS["action"]).grid(row=0, column=1, sticky="nsew", padx=4)
-        MetricCard(strip, "יתרה במזומן 💵", amount(bals["cash"]), "מזומן ביד", COLORS["success"]).grid(row=0, column=0, sticky="nsew", padx=4)
+        MetricCard(strip, "סך הכול בקופה", amount(bals["total"]), "בנק + מזומן", COLORS["nav_indicator"], icon="💼", dark=True).grid(row=0, column=2, sticky="nsew", padx=4)
+        MetricCard(strip, "יתרה בבנק", amount(bals["bank"]), "תנועות בנק והפקדות", COLORS["action"], icon="🏦").grid(row=0, column=1, sticky="nsew", padx=4)
+        MetricCard(strip, "יתרה במזומן", amount(bals["cash"]), "מזומן ביד", COLORS["success"], icon="💵").grid(row=0, column=0, sticky="nsew", padx=4)
 
         bar = self.bar()
         self.button(bar, "+ רישום הוצאה", lambda: self.movement_form("expense"), primary=True, perm="record_expense")
-        self.button(bar, "+ רישום הכנסה", lambda: self.movement_form("income"), perm="record_expense")
-        self.button(bar, "⇄ העברה בנק ↔ מזומן", self.transfer_dialog, perm="record_expense")
+        self.button(bar, "+ רישום הכנסה", lambda: self.movement_form("income"), variant="soft", perm="record_expense")
+        self.button(bar, "⇄ בנק ↔ מזומן", self.transfer_dialog, variant="soft", perm="record_expense")
         self.button(bar, "העברות פנימיות", lambda: self.show(4, "transfers"))
         self.button(bar, "הוצאות קבועות", lambda: self.show(4, "recurring"))
         self.button(bar, "חשבוניות 📎", lambda: AttachmentsDialog(self, self.selection(tree), can_edit=self.can("attachments")))
         self.button(bar, "אישור תשלום", lambda: self.show_receipt(self.selection(tree)))
-        self.button(bar, "ביטול פעולה", lambda: self.reversal(self.selection(tree)), perm="reverse")
+        self.button(bar, "ביטול פעולה", lambda: self.reversal(self.selection(tree)), variant="danger", perm="reverse")
 
-        filters = self.bar()
+        fcard = CardFrame(self.main, padx=12, pady=8)
+        fcard.pack(fill="x", pady=(0, 8))
+        filters = tk.Frame(fcard.inner, bg=COLORS["surface"])
+        filters.pack(fill="x", pady=(0, 6))
         start = self.input(filters, "מתאריך", f"01/{today()[5:7]}/{today()[:4]}" if self.mode in ("income", "expense") else "", width=11)
         end = self.input(filters, "עד תאריך", date_text(today()) if self.mode in ("income", "expense") else "", width=11)
         acct_default = {"bank": "בנק", "cash": "מזומן"}.get(self.mode, "הכול")
@@ -1214,12 +1372,13 @@ class App(tk.Tk):
         self.button(filters, "חודש נוכחי", lambda: preset(False))
         self.button(filters, "שנה נוכחית", lambda: preset(True))
 
-        filters2 = self.bar()
+        filters2 = tk.Frame(fcard.inner, bg=COLORS["surface"])
+        filters2.pack(fill="x")
         method = self.input(filters2, "אמצעי", "הכול", ("הכול",) + METHODS, 12)
         names = sorted({r["name"] for r in self.store.rows("SELECT name FROM categories")})
         category = self.input(filters2, "קטגוריה", "הכול", ("הכול", *names), 12)
-        query = self.input(filters2, "חיפוש", width=16)
-        self.button(filters2, "סינון", lambda: load())
+        query = self.input(filters2, "חיפוש", width=18)
+        self.button(filters2, "סינון", lambda: load(), variant="soft")
 
         tree = self.table(("תאריך", "מספר", "קופה", "סוג", "תיאור", "קטגוריה", "יחידה או צד", "אמצעי", "הכנסה", "הוצאה", "יתרה", "קבצים"))
         tree.bind("<Double-1>", lambda e: self.movement_info(int(tree.identify_row(e.y))) if tree.identify_row(e.y).isdigit() else None)
@@ -1256,25 +1415,26 @@ class App(tk.Tk):
     def transfers_page(self):
         bar = self.bar()
         self.button(bar, "⇄ העברה חדשה (בנק ↔ מזומן)", self.transfer_dialog, primary=True, perm="record_expense")
-        self.button(bar, "חזרה לתנועות", lambda: self.show(4))
+        self.button(bar, "← חזרה לתנועות", lambda: self.show(4))
         rows = [
             (t["id"], (date_text(t["day"]), ACCOUNTS[t["from_account"]], ACCOUNTS[t["to_account"]], amount(t["amount"]), t["reference"], t["notes"]))
             for t in self.ledger.list_transfers()
         ]
-        self.table(("תאריך", "מקופה", "לקופה", "סכום", "אסמכתא", "הערות"), rows, height=14)
+        self.table(("תאריך", "מקופה", "לקופה", "סכום", "אסמכתא", "הערות"), rows, height=14, title="היסטוריית העברות פנימיות בין בנק למזומן")
 
     def movement_info(self, entry):
         row = next(r for r in self.ledger.cash()[1] if r["id"] == entry)
         win = tk.Toplevel(self)
         win.title(f"פרטי תנועה #{entry}")
-        win.geometry("540x450")
+        win.geometry("540x480")
         win.transient(self)
         win.grab_set()
-        win.configure(bg=COLORS["background"])
+        win.configure(bg=COLORS["surface"])
 
-        panel = ttk.Frame(win, padding=18)
-        panel.pack(fill="both", expand=True)
-        ttk.Label(panel, text=f"תנועה #{entry} · {LABELS[row['kind']]}", font=(FONT, 14, "bold"), anchor="e").pack(fill="x", pady=(0, 10))
+        hdr = tk.Frame(win, bg=COLORS["nav"], padx=20, pady=14)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text=f"תנועה #{entry} · {LABELS[row['kind']]}", bg=COLORS["nav"], fg="#FFFFFF", font=(FONT, 13, "bold"), anchor="e").pack(fill="x")
+        tk.Label(hdr, text=f"{date_text(row['day'])}  •  {ACCOUNTS.get(row.get('account', 'bank'), 'בנק')}  •  {amount(row['cash'])}", bg=COLORS["nav"], fg=COLORS["nav_indicator"], font=(FONT, 9), anchor="e").pack(fill="x", pady=(2, 0))
 
         details = [
             ("תאריך חשבונאי", date_text(row["day"])),
@@ -1295,31 +1455,30 @@ class App(tk.Tk):
         if row["reversed_by"]:
             details.append(("בוטלה ע״י פעולה", f"#{row['reversed_by']}"))
 
-        box = tk.Frame(panel, bg=COLORS["surface"], highlightbackground=COLORS["border"], highlightthickness=1, padx=14, pady=10)
+        box = tk.Frame(win, bg=COLORS["surface"], padx=22, pady=14)
         box.pack(fill="both", expand=True)
         for idx, (k, v) in enumerate(details):
-            tk.Label(box, text=f":{k}", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 9, "bold"), anchor="e").grid(row=idx, column=1, sticky="e", padx=(10, 0), pady=2)
-            tk.Label(box, text=v, bg=COLORS["surface"], fg=COLORS["text"], font=(FONT, 10), anchor="e").grid(row=idx, column=0, sticky="e", pady=2)
+            tk.Label(box, text=f":{k}", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 9, "bold"), anchor="e").grid(row=idx, column=1, sticky="e", padx=(14, 0), pady=3)
+            tk.Label(box, text=v, bg=COLORS["surface"], fg=COLORS["text"], font=(FONT, 10), anchor="e").grid(row=idx, column=0, sticky="e", pady=3)
         box.columnconfigure(0, weight=1)
 
-        tail = ttk.Frame(panel)
-        tail.pack(fill="x", pady=(12, 0))
-        ttk.Button(tail, text="חשבוניות וקבלות 📎", style="Primary.TButton",
-                   command=lambda: AttachmentsDialog(self, entry, can_edit=self.can("attachments"))).pack(side="right", padx=4)
+        tk.Frame(win, bg=COLORS["border"], height=1).pack(fill="x")
+        tail = tk.Frame(win, bg=COLORS["surface_alt"], padx=20, pady=12)
+        tail.pack(fill="x")
+        ActionButton(tail, "חשבוניות וקבלות 📎", lambda: AttachmentsDialog(self, entry, can_edit=self.can("attachments")), variant="primary").pack(side="right", padx=4)
         if row["kind"] == "payment":
-            ttk.Button(tail, text="הפקת אישור תשלום", command=lambda: self.show_receipt(entry)).pack(side="right", padx=4)
-        ttk.Button(tail, text="סגירה", command=win.destroy).pack(side="left")
+            ActionButton(tail, "הפקת אישור תשלום", lambda: self.show_receipt(entry), variant="soft").pack(side="right", padx=4)
+        ActionButton(tail, "סגירה", win.destroy, variant="secondary").pack(side="left")
         win.bind("<Escape>", lambda _: win.destroy())
 
     def recurring_page(self):
         bar = self.bar()
-        self.button(bar, "הוצאה קבועה חדשה", lambda: edit_template(None), primary=True, perm="manage_recurring")
-        self.button(bar, "רישום הוצאה מהמועד", lambda: pay(), perm="record_expense")
+        self.button(bar, "+ הוצאה קבועה חדשה", lambda: edit_template(None), primary=True, perm="manage_recurring")
+        self.button(bar, "רישום הוצאה מהמועד", lambda: pay(), variant="soft", perm="record_expense")
         self.button(bar, "שיוך הוצאה קיימת", lambda: link(), perm="manage_recurring")
-        self.button(bar, "עריכת תבנית נבחרת", lambda: edit_template(self.selection(tpl_tree)), perm="manage_recurring")
-        self.button(bar, "חזרה לתנועות", lambda: self.show(4))
+        self.button(bar, "עריכת תבנית", lambda: edit_template(self.selection(tpl_tree)), perm="manage_recurring")
+        self.button(bar, "← חזרה לתנועות", lambda: self.show(4))
 
-        ttk.Label(self.main, text="מועדים ממתינים לרישום", anchor="e", font=(FONT, 12, "bold"), foreground=COLORS["warning"]).pack(fill="x")
         due = self.ledger.recurring_due(today())
         due_tree = self.table(
             ("מועד", "ספק", "קטגוריה", "סכום רגיל", "תדירות (חודשים)", "תיאור", "מצב"),
@@ -1327,10 +1486,10 @@ class App(tk.Tk):
                 (f"{r['id']}-{period}", (date_text(day), r["supplier_name"] or "—", r["category_name"], amount(r["usual_amount"]), r["frequency_months"], r["notes"] or "—", "ממתין לרישום"))
                 for r, period, day in due
             ],
-            height=6,
+            height=5,
+            title="מועדים ממתינים לרישום",
         )
 
-        ttk.Label(self.main, text="כל תבניות ההוצאות הקבועות (לעריכה והשבתה)", anchor="e", font=(FONT, 12, "bold")).pack(fill="x", pady=(8, 2))
         templates = {r["id"]: r for r in self.ledger.list_recurring()}
         tpl_tree = self.table(
             ("ספק", "קטגוריה", "סכום רגיל", "סוג סכום", "כל X חודשים", "יום בחודש", "התחלה", "סיום", "מצב", "תיאור"),
@@ -1346,6 +1505,7 @@ class App(tk.Tk):
                 for r in templates.values()
             ],
             height=7,
+            title="תבניות הוצאות קבועות (לחיצה כפולה לעריכה)",
         )
         tpl_tree.bind("<Double-1>", lambda e: edit_template(int(tpl_tree.identify_row(e.y))) if tpl_tree.identify_row(e.y).isdigit() else None)
 
@@ -1435,12 +1595,12 @@ class App(tk.Tk):
         if isinstance(self.mode, tuple) and self.mode[0] == "supplier":
             self.supplier_card(self.mode[1])
             return
-        bar = self.bar()
+        bar = self.bar(card=True)
         query = self.input(bar, "חיפוש ספק", width=22)
         self.button(bar, "פתיחת כרטיס ספק", lambda: self.show(5, ("supplier", self.selection(tree))), primary=True)
-        self.button(bar, "ספק חדש", lambda: self.edit_supplier(None), perm="manage_suppliers")
+        self.button(bar, "+ ספק חדש", lambda: self.edit_supplier(None), variant="soft", perm="manage_suppliers")
         self.button(bar, "עריכת ספק", lambda: self.edit_supplier(self.selection(tree)), perm="manage_suppliers")
-        self.button(bar, "רישום הוצאה", lambda: self.movement_form("expense"), perm="record_expense")
+        self.button(bar, "+ רישום הוצאה", lambda: self.movement_form("expense"), perm="record_expense")
 
         summary = self.ledger.suppliers_summary()
         tree = self.table(("שם", "שירות", "טלפון", "איש קשר", "שולם החודש", "שולם השנה", "הוצאה אחרונה", "קבצים", "מצב"))
@@ -1484,33 +1644,34 @@ class App(tk.Tk):
 
     def supplier_card(self, supplier_id):
         s = next(item for item in self.ledger.suppliers_summary() if item["id"] == supplier_id)
-        ttk.Label(self.main, text=f"כרטיס ספק · {s['name']} ({s['service'] or 'כללי'})", anchor="e", font=(FONT, 16, "bold")).pack(fill="x")
-        ttk.Label(
+        hcard = CardFrame(self.main, padx=16, pady=12)
+        hcard.pack(fill="x", pady=(0, 8))
+        hb = hcard.inner
+        tk.Label(hb, text=f"כרטיס ספק  •  {s['name']} ({s['service'] or 'כללי'})", bg=COLORS["surface"], fg=COLORS["text"], font=(FONT, 14, "bold"), anchor="e").pack(side="right")
+        tk.Label(hb, text=f"שולם השנה: {amount(s['year_total'])}", bg=COLORS["surface"], fg=COLORS["action"], font=(FONT, 12, "bold")).pack(side="left")
+
+        tk.Label(
             self.main,
-            text=f"איש קשר: {s['contact'] or '—'}   ·   טלפון: {s['phone'] or '—'}   ·   דוא״ל: {s['email'] or '—'}   ·   סה״כ השנה: {amount(s['year_total'])}",
-            anchor="e", foreground=COLORS["muted"],
+            text=f"איש קשר: {s['contact'] or '—'}   •   טלפון: {s['phone'] or '—'}   •   דוא״ל: {s['email'] or '—'}",
+            bg=COLORS["background"], fg=COLORS["muted"], anchor="e", font=(FONT, 9),
         ).pack(fill="x", pady=(0, 6))
 
         bar = self.bar()
-        self.button(
-            bar, "רישום הוצאה לספק",
-            lambda: self.movement_form("expense", dict(party=s["name"], supplier=s["name"])),
-            primary=True, perm="record_expense",
-        )
-        self.button(bar, "עריכת פרטי ספק", lambda: self.edit_supplier(supplier_id), perm="manage_suppliers")
+        self.button(bar, "+ רישום הוצאה לספק", lambda: self.movement_form("expense", dict(party=s["name"], supplier=s["name"])), primary=True, perm="record_expense")
+        self.button(bar, "עריכת פרטי ספק", lambda: self.edit_supplier(supplier_id), variant="soft", perm="manage_suppliers")
         self.button(bar, "חשבוניות התנועה 📎", lambda: AttachmentsDialog(self, self.selection(tree), can_edit=self.can("attachments")))
-        self.button(bar, "חזרה לספקים", lambda: self.show(5))
+        self.button(bar, "← חזרה לספקים", lambda: self.show(5))
 
-        filters = self.bar()
+        filters = self.bar(card=True)
         start = self.input(filters, "מתאריך", f"01/01/{date.today().year}", width=11)
         end = self.input(filters, "עד תאריך", date_text(today()), width=11)
         period_total_var = tk.StringVar()
-        self.button(filters, "סינון תקופה", lambda: load())
+        self.button(filters, "סינון תקופה", lambda: load(), variant="soft")
         self.button(filters, "ייצוא Excel", lambda: self.export_xlsx_report(f"היסטוריית ספק {s['name']}", headers, current_rows))
-        ttk.Label(filters, textvariable=period_total_var, font=(FONT, 10, "bold"), foreground=COLORS["action"]).pack(side="left")
+        tk.Label(filters, textvariable=period_total_var, bg=COLORS["surface"], fg=COLORS["action"], font=(FONT, 10, "bold")).pack(side="left")
 
         headers = ("תאריך", "מספר", "קופה", "סוג", "קטגוריה", "תיאור", "אמצעי", "אסמכתא", "סכום", "קבצים")
-        tree = self.table(headers, height=9)
+        tree = self.table(headers, height=8)
         current_rows = []
 
         def load():
@@ -1536,11 +1697,11 @@ class App(tk.Tk):
 
         atts = self.store.list_attachments(supplier_id=supplier_id)
         if atts:
-            ttk.Label(self.main, text="חשבוניות וקבלות מצורפות לספק (לחיצה כפולה לפתיחה)", anchor="e", font=(FONT, 10, "bold")).pack(fill="x", pady=(6, 2))
             att_tree = self.table(
                 ("תאריך תנועה", "מספר תנועה", "תיאור", "שם קובץ"),
                 [(a["id"], (date_text(a["entry_day"]), a["entry"], a["entry_description"], a["filename"])) for a in atts],
                 height=4,
+                title="חשבוניות וקבלות מצורפות לספק (לחיצה כפולה לפתיחה)",
             )
             att_tree.bind("<Double-1>", lambda e: os.startfile(str(self.store.attachment_path(int(att_tree.identify_row(e.y)))[0])) if att_tree.identify_row(e.y).isdigit() else None)
 
@@ -1563,7 +1724,7 @@ class App(tk.Tk):
         return row["id"], base
 
     # ------------------------------------------------------------------
-    # Page 6: Reports & Analytics (with Bank/Cash split)
+    # Page 6: Reports & Analytics
     # ------------------------------------------------------------------
 
     def reports(self):
@@ -1579,14 +1740,14 @@ class App(tk.Tk):
             "דוח השוואת הכנסות והוצאות",
             "דוח תנועות כספיות מלא",
         )
-        bar = self.bar()
+        bar = self.bar(card=True)
         selected, from_date, to_date = self.mode or (options[0], f"01/{today()[5:7]}/{today()[:4]}", date_text(today()))
         if selected not in options:
             selected = options[0]
         option = self.input(bar, "סוג דוח", selected, options, 26)
         start = self.input(bar, "מתאריך", from_date, width=11)
         end = self.input(bar, "עד תאריך", to_date, width=11)
-        self.button(bar, "הצגה", lambda: self.show(6, (option.get(), start.get(), end.get())), primary=True)
+        self.button(bar, "הצגת דוח", lambda: self.show(6, (option.get(), start.get(), end.get())), primary=True)
 
         lo, hi = self.bounds(from_date, to_date)
         if selected == "דוח חובות דיירים":
@@ -1709,13 +1870,14 @@ class App(tk.Tk):
 
         actions = self.bar()
         self.button(actions, "ייצוא Excel (.xlsx)", lambda: self.export_xlsx_report(selected, headers, rows, totals_row), primary=True)
-        self.button(actions, "ייצוא PDF", lambda: self.export_pdf_report(selected, headers, rows, subtitle=subtitle, kpis=kpis, totals=totals_row, chart_svg=chart_svg))
+        self.button(actions, "ייצוא PDF", lambda: self.export_pdf_report(selected, headers, rows, subtitle=subtitle, kpis=kpis, totals=totals_row, chart_svg=chart_svg), variant="soft")
         self.button(actions, "תצוגה להדפסה", lambda: self.print_report(selected, headers, rows, subtitle=subtitle, kpis=kpis, totals=totals_row, chart_svg=chart_svg))
         self.button(actions, "ייצוא CSV", lambda: self.export(headers, rows))
 
         if selected == "דוח השוואת הכנסות והוצאות":
-            chart = IncomeExpenseChart(self.main, series, height=190)
-            chart.pack(fill="x", pady=(0, 8))
+            cc = CardFrame(self.main, padx=10, pady=8)
+            cc.pack(fill="x", pady=(0, 8))
+            IncomeExpenseChart(cc.inner, series, height=190).pack(fill="x")
 
         display_rows = list(rows)
         if totals_row:
@@ -1764,7 +1926,7 @@ class App(tk.Tk):
             self, "תעריף ברירת מחדל לכל היחידות",
             [("amount", "תעריף בשקלים", number(int(self.store.get("rate"))), None), ("day", "מועד תחולה", date_text(today()), None)],
             save,
-            lambda _, bar: ttk.Label(bar, text="יחידות מפוצלות יחויבו במחצית. הפעולה מחילה תעריף חדש על כל היחידות.", anchor="e").pack(side="bottom", fill="x"),
+            lambda _, bar: tk.Label(bar, text="יחידות מפוצלות יחויבו במחצית. הפעולה מחילה תעריף חדש על כל היחידות.", bg=COLORS["surface_alt"], fg=COLORS["muted"], anchor="e", font=(FONT, 8)).pack(side="bottom", fill="x", pady=(0, 8)),
         )
 
     def password(self):
@@ -1834,6 +1996,7 @@ def startup_error(text):
 def run():
     import msvcrt
 
+    enable_hidpi()
     data_dir = Path(os.environ.get("VAAD_DATA", Path(os.environ["LOCALAPPDATA"]) / "VaadBayt"))
     configure_logging(data_dir)
     path = data_dir / "vaad.sqlite3"

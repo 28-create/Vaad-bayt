@@ -1,4 +1,4 @@
-"""Excel-style 12-month Annual Collection Matrix (2025 / 2026 / 2027) with 1-click Quick Pay."""
+"""Excel-style 12-month Annual Collection Matrix (2025 / 2026 / 2027) with modern SaaS styling & 1-click Quick Pay."""
 
 from datetime import date
 import sqlite3
@@ -10,7 +10,7 @@ from .reports import fmt_date, fmt_money, fmt_unit
 from .seed_data import HEBREW_MONTHS, HEBREW_MONTHS_SHORT
 from .store import Problem
 from .theme import COLORS, FONT
-from .ui_widgets import MetricCard
+from .ui_widgets import ActionButton, CardFrame, MetricCard
 
 CELL_SYMBOLS = {
     "paid": "✓",
@@ -33,59 +33,68 @@ def render_annual_matrix(app):
             "building": new_building if new_building is not None else building,
         })
 
-    # Top bar: Year switcher + Building filter pills + Search
-    top = app.bar()
-    ttk.Label(top, text="שנה:", font=(FONT, 10, "bold")).pack(side="right", padx=(6, 4))
+    # Top filter card: Year pills + Building pills + Search
+    filter_card = CardFrame(app.main, padx=14, pady=10)
+    filter_card.pack(fill="x", pady=(0, 10))
+    top = filter_card.inner
+
+    tk.Label(top, text="שנה", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 9, "bold")).pack(side="right", padx=(8, 4))
     for yr in (2025, 2026, 2027):
-        app.button(top, str(yr), lambda y=yr: reload_view(new_year=y), primary=(year == yr))
+        ActionButton(
+            top, str(yr), lambda y=yr: reload_view(new_year=y),
+            variant="primary" if year == yr else "secondary", padx=12, pady=4,
+        ).pack(side="right", padx=(4, 0))
 
-    ttk.Label(top, text="  |  בניין:", font=(FONT, 10, "bold")).pack(side="right", padx=(6, 4))
-    for b_lbl, b_val in (("הכול", "הכול"), ("בניין 14", "14"), ("בניין 16", "16"), ("בניין 18", "18")):
-        app.button(top, b_lbl, lambda bv=b_val: reload_view(new_building=bv), primary=(building == b_val))
+    tk.Frame(top, bg=COLORS["border"], width=1, height=24).pack(side="right", padx=12)
 
-    query = app.input(top, "חיפוש דייר", width=16)
+    tk.Label(top, text="בניין", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 9, "bold")).pack(side="right", padx=(6, 4))
+    for b_lbl, b_val in (("הכול", "הכול"), ("14", "14"), ("16", "16"), ("18", "18")):
+        ActionButton(
+            top, b_lbl, lambda bv=b_val: reload_view(new_building=bv),
+            variant="soft" if building == b_val else "secondary", padx=11, pady=4,
+        ).pack(side="right", padx=(4, 0))
+
+    tk.Label(top, text="חיפוש דייר", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 9, "bold")).pack(side="left", padx=(0, 6))
+    query = tk.StringVar()
+    ttk.Entry(top, textvariable=query, justify="right", width=18).pack(side="left", padx=(6, 0))
 
     # Data
     b_filter = None if building == "הכול" else building
     matrix = app.ledger.annual_matrix(year, building_filter=b_filter)
 
-    # Mini KPI summary strip
     total_paid_amt = sum(r["paid_amount"] for r in matrix)
     total_debt_amt = sum(r["debt_now"] for r in matrix)
     fully_paid_units = sum(1 for r in matrix if r["unpaid_due_count"] == 0)
     total_paid_months = sum(r["paid_count"] for r in matrix)
 
-    kpi_frame = ttk.Frame(app.main)
-    kpi_frame.pack(fill="x", pady=(0, 8))
+    kpi_frame = tk.Frame(app.main, bg=COLORS["background"])
+    kpi_frame.pack(fill="x", pady=(0, 10))
     for col in range(4):
         kpi_frame.columnconfigure(col, weight=1, uniform="mkpi")
     cards = [
-        (f"יחידות מעודכנות ({year})", f"{fully_paid_units} / {len(matrix)}", "ללא פיגור לתקופה", COLORS["success"]),
-        (f"סך גבייה ({year})", fmt_money(total_paid_amt), f"{total_paid_months} חודשי תשלום", COLORS["action"]),
-        ("חוב פתוח נוכחי" if year >= 2026 else f"לא שולם ({year})", fmt_money(total_debt_amt), "לתשלום מיידי" if year >= 2026 else "שנת 2025 היסטורית", COLORS["danger"] if total_debt_amt > 0 else COLORS["success"]),
-        ("מקרא טבלה", "✓ שולם   ✗ לא שולם", "לחיצה כפולה על שורה לסימון תשלום", COLORS["info"]),
+        (f"יחידות מעודכנות ({year})", f"{fully_paid_units} / {len(matrix)}", "ללא פיגור לתקופה", COLORS["success"], "✓"),
+        (f"סך גבייה ({year})", fmt_money(total_paid_amt), f"{total_paid_months} חודשי תשלום", COLORS["action"], "₪"),
+        ("חוב פתוח נוכחי" if year >= 2026 else f"לא שולם ({year})", fmt_money(total_debt_amt), "לתשלום מיידי" if year >= 2026 else "שנת 2025 היסטורית", COLORS["danger"] if total_debt_amt > 0 else COLORS["success"], "!"),
+        ("עבודה מהירה", "✓ שולם   ✗ לא שולם", "לחיצה כפולה על דייר לתשלום מהיר", COLORS["info"], "⚡"),
     ]
-    for i, (t, v, s, c) in enumerate(cards):
-        MetricCard(kpi_frame, t, v, s, c).grid(row=0, column=3 - i, sticky="nsew", padx=4)
+    for i, (t, v, s, c, ic) in enumerate(cards):
+        MetricCard(kpi_frame, t, v, s, c, icon=ic).grid(row=0, column=3 - i, sticky="nsew", padx=4)
 
     # Actions bar
     actions = app.bar()
     if year >= 2026:
         app.button(actions, "✓ סימון תשלום מהיר (חודשים)", lambda: quick_pay_dialog(app, tree, year, matrix), primary=True, perm="record_payment")
-    app.button(actions, "פתיחת כרטסת דייר", lambda: app.unit_detail(app.selection(tree)))
-    app.button(actions, "ייצוא Excel (.xlsx)", lambda: export_matrix(app, year, headers, current_rows, "xlsx"))
+    app.button(actions, "כרטסת דייר", lambda: app.unit_detail(app.selection(tree)), variant="soft")
+    app.button(actions, "ייצוא Excel", lambda: export_matrix(app, year, headers, current_rows, "xlsx"))
     app.button(actions, "ייצוא PDF", lambda: export_matrix(app, year, headers, current_rows, "pdf"))
     app.button(actions, "הדפסה", lambda: export_matrix(app, year, headers, current_rows, "print"))
 
-    # Table headers
     if year == 2025:
         headers = ("בניין", "דייר", "תעריף", *HEBREW_MONTHS_SHORT, "שולם", "שיק פיצויים", "ביצוע")
     else:
         headers = ("בניין", "דייר", "תעריף", *HEBREW_MONTHS_SHORT, "חודשים", "שולם", "חוב")
 
-    tree = app.table(headers, height=16)
-    # Tighten month column widths so all 12 months fit comfortably on screen without scrolling!
-    num_cols = len(headers)
+    tree = app.table(headers, height=15)
     for col_idx, label in enumerate(reversed(headers)):
         if label in HEBREW_MONTHS_SHORT:
             tree.column(col_idx, width=42, minwidth=36, anchor="center")
@@ -94,13 +103,13 @@ def render_annual_matrix(app):
         elif label == "תעריף":
             tree.column(col_idx, width=68, minwidth=58, anchor="e")
         elif label == "דייר":
-            tree.column(col_idx, width=135, minwidth=100, anchor="e")
+            tree.column(col_idx, width=136, minwidth=100, anchor="e")
         elif label == "חודשים":
             tree.column(col_idx, width=58, minwidth=50, anchor="center")
         elif label in ("שיק פיצויים", "ביצוע"):
             tree.column(col_idx, width=82, minwidth=68, anchor="center")
         else:
-            tree.column(col_idx, width=86, minwidth=72, anchor="e")
+            tree.column(col_idx, width=88, minwidth=72, anchor="e")
 
     current_rows = []
 
@@ -164,7 +173,7 @@ def export_matrix(app, year, headers, rows, fmt):
 
 
 def quick_pay_dialog(app, tree, year, matrix, forced_uid=None):
-    """Dead-simple 1-click multi-month payment dialog directly from the Annual Matrix."""
+    """Sleek 1-click multi-month payment modal directly from the Annual Matrix."""
     app.require("record_payment")
     uid = forced_uid if forced_uid is not None else app.selection(tree)
     item = next((m for m in matrix if m["unit"]["id"] == uid), None)
@@ -175,29 +184,28 @@ def quick_pay_dialog(app, tree, year, matrix, forced_uid=None):
     rate = item["rate"] or 10000
 
     win = tk.Toplevel(app)
-    win.title(f"תשלום מהיר · {item['display_name']} ({fmt_unit(u)})")
+    win.title(f"תשלום מהיר · {item['display_name']}")
     win.transient(app)
     win.grab_set()
     win.resizable(False, False)
-    win.configure(bg=COLORS["background"])
+    win.configure(bg=COLORS["surface"])
 
-    panel = ttk.Frame(win, padding=20)
+    # Dark header banner
+    hdr = tk.Frame(win, bg=COLORS["nav"], padx=22, pady=14)
+    hdr.pack(fill="x")
+    tk.Label(hdr, text=f"תשלום מהיר · {item['display_name']}", bg=COLORS["nav"], fg="#FFFFFF", font=(FONT, 13, "bold"), anchor="e").pack(fill="x")
+    tk.Label(
+        hdr,
+        text=f"בניין {u['building']} · תעריף {fmt_money(rate)} לחודש · שנת {year}",
+        bg=COLORS["nav"], fg=COLORS["nav_indicator"], font=(FONT, 9), anchor="e",
+    ).pack(fill="x", pady=(2, 0))
+
+    panel = tk.Frame(win, bg=COLORS["surface"], padx=22, pady=16)
     panel.pack(fill="both", expand=True)
 
-    ttk.Label(
-        panel,
-        text=f"בניין {u['building']} · {item['display_name']}   (תעריף: {fmt_money(rate)} לחודש)",
-        font=(FONT, 13, "bold"),
-        anchor="e",
-    ).pack(fill="x", pady=(0, 6))
-    ttk.Label(
-        panel,
-        text=f"סמנו את החודשים ששולמו לשנת {year}:",
-        foreground=COLORS["muted"],
-        anchor="e",
-    ).pack(fill="x", pady=(0, 8))
+    tk.Label(panel, text=f"סמנו את החודשים ששולמו לשנת {year}:", bg=COLORS["surface"], fg=COLORS["muted"], font=(FONT, 9, "bold"), anchor="e").pack(fill="x", pady=(0, 8))
 
-    grid = tk.Frame(panel, bg=COLORS["surface"], highlightbackground=COLORS["border"], highlightthickness=1, padx=14, pady=12)
+    grid = tk.Frame(panel, bg=COLORS["surface_alt"], highlightbackground=COLORS["border"], highlightthickness=1, padx=12, pady=10)
     grid.pack(fill="x", pady=(0, 12))
 
     month_vars = {}
@@ -205,7 +213,7 @@ def quick_pay_dialog(app, tree, year, matrix, forced_uid=None):
 
     def update_total(*_):
         selected = [m for m, var in month_vars.items() if var.get()]
-        total_var.set(f"נבחרו {len(selected)} חודשים   ·   סך לתשלום: {fmt_money(len(selected) * rate)}")
+        total_var.set(f"נבחרו {len(selected)} חודשים   •   סך לתשלום: {fmt_money(len(selected) * rate)}")
 
     for idx in range(12):
         mo = idx + 1
@@ -218,47 +226,37 @@ def quick_pay_dialog(app, tree, year, matrix, forced_uid=None):
 
         if already_paid:
             lbl = tk.Label(
-                grid,
-                text=f"✓ {HEBREW_MONTHS[idx]}",
-                bg=COLORS["success_bg"],
-                fg=COLORS["success"],
-                font=(FONT, 9, "bold"),
-                padx=8,
-                pady=5,
+                grid, text=f"✓ {HEBREW_MONTHS[idx]}",
+                bg=COLORS["success_bg"], fg=COLORS["success"],
+                highlightbackground=COLORS["success_border"], highlightthickness=1,
+                font=(FONT, 9, "bold"), padx=8, pady=6,
             )
             lbl.grid(row=row_i, column=col_i, sticky="ew", padx=4, pady=4)
         else:
             month_vars[mo] = var
             var.trace_add("write", update_total)
             cb = tk.Checkbutton(
-                grid,
-                text=HEBREW_MONTHS[idx],
-                variable=var,
-                bg=COLORS["surface"],
-                activebackground=COLORS["surface_alt"],
+                grid, text=HEBREW_MONTHS[idx], variable=var,
+                bg=COLORS["surface"], activebackground=COLORS["action_soft"],
                 fg=COLORS["danger"] if st == "unpaid" else COLORS["text"],
                 font=(FONT, 9, "bold" if st == "unpaid" else "normal"),
-                anchor="e",
-                padx=6,
-                pady=4,
+                anchor="e", padx=8, pady=5, relief="solid", bd=1,
             )
             cb.grid(row=row_i, column=col_i, sticky="ew", padx=4, pady=4)
 
-    # Quick select unpaid button
     def select_all_unpaid():
         for mo, var in month_vars.items():
             if item["months"][mo - 1] in ("unpaid", "partial"):
                 var.set(True)
 
-    sel_bar = ttk.Frame(panel)
-    sel_bar.pack(fill="x", pady=(0, 8))
-    ttk.Label(sel_bar, textvariable=total_var, font=(FONT, 11, "bold"), foreground=COLORS["action"]).pack(side="right")
-    ttk.Button(sel_bar, text="בחר את כל החודשים שבפיגור", command=select_all_unpaid).pack(side="left")
+    sel_bar = tk.Frame(panel, bg=COLORS["action_soft"], highlightbackground=COLORS["action_border"], highlightthickness=1, padx=12, pady=8)
+    sel_bar.pack(fill="x", pady=(0, 12))
+    tk.Label(sel_bar, textvariable=total_var, bg=COLORS["action_soft"], fg=COLORS["action"], font=(FONT, 10, "bold")).pack(side="right")
+    ActionButton(sel_bar, "בחר את כל הפיגורים", select_all_unpaid, variant="secondary", padx=10, pady=3).pack(side="left")
     update_total()
 
-    # Payment details
-    form = ttk.Frame(panel)
-    form.pack(fill="x", pady=(4, 12))
+    form = tk.Frame(panel, bg=COLORS["surface"])
+    form.pack(fill="x", pady=(0, 4))
 
     day_var = tk.StringVar(value=fmt_date(date.today().isoformat()))
     method_var = tk.StringVar(value="העברה בנקאית")
@@ -266,10 +264,7 @@ def quick_pay_dialog(app, tree, year, matrix, forced_uid=None):
     ref_var = tk.StringVar()
     notes_var = tk.StringVar()
 
-    def sync_account(*_):
-        account_var.set(ACCOUNTS[default_account(method_var.get())])
-
-    method_var.trace_add("write", sync_account)
+    method_var.trace_add("write", lambda *_: account_var.set(ACCOUNTS[default_account(method_var.get())]))
 
     form_rows = [
         ("תאריך תשלום", ttk.Entry(form, textvariable=day_var, justify="right", width=26)),
@@ -279,7 +274,7 @@ def quick_pay_dialog(app, tree, year, matrix, forced_uid=None):
         ("הערה", ttk.Entry(form, textvariable=notes_var, justify="right", width=26)),
     ]
     for r_idx, (lbl, widget) in enumerate(form_rows):
-        ttk.Label(form, text=lbl, anchor="e").grid(row=r_idx, column=1, sticky="e", padx=(12, 0), pady=4)
+        tk.Label(form, text=lbl, bg=COLORS["surface"], fg=COLORS["text_secondary"], font=(FONT, 9, "bold"), anchor="e").grid(row=r_idx, column=1, sticky="e", padx=(12, 0), pady=4)
         widget.grid(row=r_idx, column=0, sticky="ew", pady=4)
     form.columnconfigure(0, weight=1)
 
@@ -305,8 +300,9 @@ def quick_pay_dialog(app, tree, year, matrix, forced_uid=None):
         except (Problem, sqlite3.Error, ValueError) as exc:
             app.error(exc, win)
 
-    tail = ttk.Frame(panel)
+    tk.Frame(win, bg=COLORS["border"], height=1).pack(fill="x")
+    tail = tk.Frame(win, bg=COLORS["surface_alt"], padx=22, pady=12)
     tail.pack(fill="x")
-    ttk.Button(tail, text="שמירת תשלום", style="Primary.TButton", command=commit).pack(side="right", padx=4)
-    ttk.Button(tail, text="ביטול", command=win.destroy).pack(side="right", padx=4)
+    ActionButton(tail, "שמירת תשלום", commit, variant="primary", padx=18, pady=7).pack(side="right", padx=(6, 0))
+    ActionButton(tail, "ביטול", win.destroy, variant="secondary", padx=14, pady=7).pack(side="right", padx=(6, 0))
     win.bind("<Escape>", lambda _: win.destroy())
